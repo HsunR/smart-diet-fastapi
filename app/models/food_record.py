@@ -1,0 +1,28 @@
+import uuid
+from datetime import datetime, timezone
+from sqlalchemy import Column, String, Text, Date, DateTime, ForeignKey, Integer, Numeric
+from sqlalchemy import JSON
+from sqlalchemy.dialects.postgresql import UUID
+
+from app.core.database import Base
+
+
+class FoodRecord(Base):
+    """饮食记录表：保存用户对每一餐的图片、主观评价及辅助明细。"""
+    __tablename__ = "food_records"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # 饮食记录主键。
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)  # 所属用户，关联 users.id。
+    date = Column(Date, nullable=False)  # 实际就餐日期。
+    meal_type = Column(String(16), nullable=False)  # 餐次类型：早餐、午餐、晚餐或其他。
+    name = Column(String(120), nullable=False, default="")  # 用户填写的饮食名称。
+    description = Column(Text, nullable=False, default="")  # 用户填写的饮食描述，可为空。
+    positive_tags = Column(JSON, default=list)  # 用户认为这餐好的标签列表。
+    negative_tags = Column(JSON, default=list)  # 用户不喜欢这餐的标签列表。
+    price = Column(Numeric(10, 2), nullable=True)  # 餐费金额，可为空。
+    foods = Column(JSON, default=list)  # 食物明细，兼容 AI 识别及报表统计。
+    meal_overview = Column(JSON, default=dict)  # 餐食概览、健康分和建议等扩展信息。
+    image_url = Column(String(512), default="")  # 上传餐食图片的 MinIO 访问地址。
+    rating = Column(Integer, default=0)  # 用户星级评分，0 表示尚未评分。
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))  # 创建时间（UTC）。
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))  # 最后更新时间（UTC）。
