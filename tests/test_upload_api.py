@@ -13,7 +13,7 @@ class FakeStorage:
 @pytest.mark.asyncio
 async def test_upload_stores_object_in_minio(auth_client, monkeypatch):
     storage = FakeStorage()
-    monkeypatch.setattr("app.api.upload.get_storage", lambda: storage)
+    monkeypatch.setattr("app.api.v1.upload.get_storage", lambda: storage)
 
     response = await auth_client.post(
         "/api/v1/upload",
