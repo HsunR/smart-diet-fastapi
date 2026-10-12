@@ -35,8 +35,6 @@ class FoodRecordCreate(CamelModel):
     positive_tags: list[str] = Field(default_factory=list, description="用户认为好的标签")
     negative_tags: list[str] = Field(default_factory=list, description="用户不喜欢的标签")
     price: Optional[float] = Field(default=None, ge=0, description="餐费金额，可选且不能为负")
-    foods: list[FoodItem] = Field(default_factory=list, description="食物明细")
-    meal_overview: MealOverview = Field(default_factory=MealOverview, description="餐食综合信息")
     image_url: str = Field(default="", description="餐食图片 URL")
     rating: int = Field(default=0, ge=0, le=5, description="用户星级评分，范围 0–5")
 
@@ -52,8 +50,6 @@ class FoodRecordUpdate(CamelModel):
     price: Optional[float] = Field(default=None, ge=0, description="餐费金额")
     image_url: Optional[str] = Field(default=None, max_length=512, description="餐食图片 URL")
     rating: Optional[int] = Field(default=None, ge=0, le=5, description="星级评分，范围 0–5")
-    foods: Optional[list[FoodItem]] = Field(default=None, description="食物明细")
-    meal_overview: Optional[MealOverview] = Field(default=None, description="餐食综合信息")
 
 
 class FoodRecordResponse(CamelModel):
@@ -67,8 +63,6 @@ class FoodRecordResponse(CamelModel):
     positive_tags: list[str] = Field(default_factory=list, description="用户认为好的标签")
     negative_tags: list[str] = Field(default_factory=list, description="用户不喜欢的标签")
     price: Optional[float] = Field(default=None, description="餐费金额")
-    foods: list[FoodItem] = Field(description="食物明细")
-    meal_overview: MealOverview = Field(description="餐食综合信息")
     image_url: str = Field(description="餐食图片 URL")
     rating: Optional[int] = Field(default=0, description="用户星级评分")
     created_at: datetime = Field(description="记录创建时间")

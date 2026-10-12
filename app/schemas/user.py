@@ -16,8 +16,6 @@ class UserCreate(CamelModel):
     age: int = Field(default=25, description="年龄，单位：岁")
     height: Decimal = Field(default=Decimal("170"), description="身高，单位：厘米")
     weight: Decimal = Field(default=Decimal("65"), description="体重，单位：千克")
-    activity_level: int = Field(default=3, description="日常活动等级")
-    goal: str = Field(default="maintain", description="饮食目标")
 
 
 class UserUpdate(CamelModel):
@@ -28,10 +26,6 @@ class UserUpdate(CamelModel):
     age: Optional[int] = Field(default=None, description="年龄，单位：岁")
     height: Optional[Decimal] = Field(default=None, description="身高，单位：厘米")
     weight: Optional[Decimal] = Field(default=None, description="体重，单位：千克")
-    activity_level: Optional[int] = Field(default=None, description="日常活动等级")
-    goal: Optional[str] = Field(default=None, description="饮食目标")
-    preferences: Optional[list] = Field(default=None, description="饮食偏好标签")
-    allergies: Optional[list] = Field(default=None, description="过敏原或忌口")
 
 
 class UserResponse(CamelModel):
@@ -44,10 +38,6 @@ class UserResponse(CamelModel):
     age: int = Field(description="年龄，单位：岁")
     height: Decimal = Field(description="身高，单位：厘米")
     weight: Decimal = Field(description="体重，单位：千克")
-    activity_level: int = Field(description="日常活动等级")
-    goal: str = Field(description="饮食目标")
-    preferences: list = Field(description="饮食偏好标签")
-    allergies: list = Field(description="过敏原或忌口")
     created_at: datetime = Field(description="注册时间")
 
 

@@ -1,7 +1,6 @@
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import Column, String, SmallInteger, Numeric, DateTime
-from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import UUID
 
 from app.core.database import Base
@@ -22,9 +21,5 @@ class User(Base):
     age = Column(SmallInteger, default=25, comment="年龄，单位：岁")
     height = Column(Numeric(5, 1), default=170, comment="身高，单位：厘米")
     weight = Column(Numeric(5, 1), default=65, comment="体重，单位：千克")
-    activity_level = Column(SmallInteger, default=3, comment="日常活动等级")
-    goal = Column(String(16), default="maintain", comment="饮食目标：减脂、保持或增肌")
-    preferences = Column(JSON, default=list, comment="饮食偏好标签列表")
-    allergies = Column(JSON, default=list, comment="过敏原或忌口列表")
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), comment="创建时间，UTC")
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), comment="最后更新时间，UTC")

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.models.user import User
+from app.schemas.base import ApiResponse
 from app.schemas.chat import MessageCreate, MessageResponse, ConversationResponse
 from app.services import chat as chat_service
 from app.services.ai import get_streaming_llm
@@ -16,23 +17,23 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-@router.post("/conversations", response_model=ConversationResponse, status_code=201)
+@router.post("/conversations", response_model=ApiResponse[ConversationResponse], status_code=201)
 async def create_conversation(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     conv = await chat_service.create_conversation(db, current_user.id)
-    return ConversationResponse.model_validate(conv)
+    return ApiResponse.success(ConversationResponse.model_validate(conv))
 
 
-@router.get("/conversations", response_model=list[ConversationResponse])
+@router.get("/conversations", response_model=ApiResponse[list[ConversationResponse]])
 async def list_conversations(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     convs = await chat_service.list_conversations(db, current_user.id)
-    return [ConversationResponse.model_validate(c) for c in convs]
+    return ApiResponse.success([ConversationResponse.model_validate(c) for c in convs])
 
 
-@router.get("/conversations/{conv_id}/messages", response_model=list[MessageResponse])
+@router.get("/conversations/{conv_id}/messages", response_model=ApiResponse[list[MessageResponse]])
 async def get_history(conv_id: UUID, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     await chat_service.get_conversation(db, current_user.id, conv_id)
     messages = await chat_service.get_history(db, conv_id)
-    return [MessageResponse.model_validate(m) for m in messages]
+    return ApiResponse.success([MessageResponse.model_validate(m) for m in messages])
 
 
 @router.delete("/conversations/{conv_id}", status_code=204)
@@ -40,7 +41,7 @@ async def delete_conversation(conv_id: UUID, current_user: User = Depends(get_cu
     await chat_service.delete_conversation(db, current_user.id, conv_id)
 
 
-@router.post("/messages", response_model=MessageResponse)
+@router.post("/messages", response_model=ApiResponse[MessageResponse])
 async def send_message(
     req: MessageCreate,
     current_user: User = Depends(get_current_user),
@@ -61,7 +62,7 @@ async def send_message(
     graph = build_chat_graph()
     state: ChatState = {
         "message": req.content,
-        "user_profile": {"age": current_user.age, "weight": float(current_user.weight), "goal": current_user.goal},
+        "user_profile": {"age": current_user.age, "weight": float(current_user.weight)},
         "recent_diet": {},
         "history": history,
         "intent": None,
@@ -71,7 +72,7 @@ async def send_message(
     reply = result.get("reply", "抱歉，暂时无法回复")
 
     msg = await chat_service.add_message(db, conv_id, "assistant", reply, {"intent": result.get("intent")})
-    return MessageResponse.model_validate(msg)
+    return ApiResponse.success(MessageResponse.model_validate(msg))
 
 
 @router.post("/messages/stream")
@@ -94,7 +95,7 @@ async def send_message_stream(
 
     # 构建消息列表
     prompt = CHAT_PROMPT.format(
-        user_profile=json.dumps({"age": current_user.age, "weight": float(current_user.weight), "goal": current_user.goal}, ensure_ascii=False),
+        user_profile=json.dumps({"age": current_user.age, "weight": float(current_user.weight)}, ensure_ascii=False),
         recent_diet=json.dumps({}, ensure_ascii=False),
     )
     messages = [SystemMessage(content=prompt)]

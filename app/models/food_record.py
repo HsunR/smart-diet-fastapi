@@ -21,8 +21,6 @@ class FoodRecord(Base):
     positive_tags = Column(JSON, default=list, comment="用户认为这餐好的标签列表")
     negative_tags = Column(JSON, default=list, comment="用户不喜欢这餐的标签列表")
     price = Column(Numeric(10, 2), nullable=True, comment="餐费金额，可为空")
-    foods = Column(JSON, default=list, comment="食物明细，兼容 AI 识别及报表统计")
-    meal_overview = Column(JSON, default=dict, comment="餐食概览、健康分和建议等扩展信息")
     image_url = Column(String(512), default="", comment="上传餐食图片的 MinIO 访问地址")
     rating = Column(Integer, default=0, comment="用户星级评分，0 表示尚未评分")
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), comment="创建时间，UTC")

@@ -21,7 +21,7 @@ async def test_upload_stores_object_in_minio(auth_client, monkeypatch):
     )
 
     assert response.status_code == 200
-    payload = response.json()
+    payload = response.json()["data"]
     assert payload["url"].startswith("https://objects.example.test/smartdiet/")
     assert payload["filename"].endswith(".jpg")
     assert storage.uploaded == (payload["filename"], b"image-bytes", "image/jpeg")

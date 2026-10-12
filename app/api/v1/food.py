@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.core.exceptions import BadRequest
 from app.models.user import User
+from app.schemas.base import ApiResponse
 from app.schemas.food import FoodRecordCreate, FoodRecordUpdate, FoodRecordResponse, FoodRecognitionRequest, FoodRecognitionResponse
 from app.schemas.report import WeeklyReportResponse
 from app.services import food as food_service
@@ -17,22 +18,22 @@ from app.workflows.food_recognition import build_food_recognition_graph, FoodRec
 router = APIRouter(prefix="/records", tags=["food_records"])
 
 
-@router.post("", response_model=FoodRecordResponse, status_code=201)
+@router.post("", response_model=ApiResponse[FoodRecordResponse], status_code=201)
 async def create_record(data: FoodRecordCreate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     record = await food_service.create_record(db, current_user.id, data)
-    return FoodRecordResponse.model_validate(record)
+    return ApiResponse.success(FoodRecordResponse.model_validate(record))
 
 
-@router.get("", response_model=list[FoodRecordResponse])
+@router.get("", response_model=ApiResponse[list[FoodRecordResponse]])
 async def get_records(date: date = Query(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     records = await food_service.get_records_by_date(db, current_user.id, date)
-    return [FoodRecordResponse.model_validate(r) for r in records]
+    return ApiResponse.success([FoodRecordResponse.model_validate(r) for r in records])
 
 
-@router.get("/history", response_model=list[FoodRecordResponse])
+@router.get("/history", response_model=ApiResponse[list[FoodRecordResponse]])
 async def get_history(start: date = Query(...), end: date = Query(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     records = await food_service.get_history(db, current_user.id, start, end)
-    return [FoodRecordResponse.model_validate(r) for r in records]
+    return ApiResponse.success([FoodRecordResponse.model_validate(r) for r in records])
 
 
 @router.delete("/{record_id}", status_code=204)
@@ -40,13 +41,13 @@ async def delete_record(record_id: UUID, current_user: User = Depends(get_curren
     await food_service.delete_record(db, current_user.id, record_id)
 
 
-@router.patch("/{record_id}", response_model=FoodRecordResponse)
+@router.patch("/{record_id}", response_model=ApiResponse[FoodRecordResponse])
 async def update_record(record_id: UUID, data: FoodRecordUpdate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     record = await food_service.update_record(db, current_user.id, record_id, data)
-    return FoodRecordResponse.model_validate(record)
+    return ApiResponse.success(FoodRecordResponse.model_validate(record))
 
 
-@router.post("/recognize", response_model=FoodRecognitionResponse)
+@router.post("/recognize", response_model=ApiResponse[FoodRecognitionResponse])
 async def recognize_food(
     req: FoodRecognitionRequest,
     current_user: User = Depends(get_current_user),
@@ -56,7 +57,7 @@ async def recognize_food(
     initial_state: FoodRecognitionState = {
         "image_url": req.image_url,
         "user_id": str(current_user.id),
-        "user_profile": {"age": current_user.age, "weight": float(current_user.weight), "goal": current_user.goal},
+        "user_profile": {"age": current_user.age, "weight": float(current_user.weight)},
         "user_feedback": req.user_feedback or "",
         "raw_response": None,
         "foods": [],
@@ -67,11 +68,11 @@ async def recognize_food(
     result = await graph.ainvoke(initial_state)
     if result.get("error"):
         raise BadRequest(result["error"])
-    return FoodRecognitionResponse(
+    return ApiResponse.success(FoodRecognitionResponse(
         foods=result["foods"],
         meal_overview=result["meal_overview"],
         dietary_advice=result["dietary_advice"],
-    )
+    ))
 
 
 @router.post("/recognize/stream")
@@ -80,7 +81,7 @@ async def recognize_food_stream_endpoint(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    user_profile = {"age": current_user.age, "weight": float(current_user.weight), "goal": current_user.goal}
+    user_profile = {"age": current_user.age, "weight": float(current_user.weight)}
 
     async def event_generator():
         async for event in recognize_food_stream(req.image_url, user_profile):
@@ -97,6 +98,6 @@ async def recognize_food_stream_endpoint(
     )
 
 
-@router.get("/report/weekly", response_model=WeeklyReportResponse)
+@router.get("/report/weekly", response_model=ApiResponse[WeeklyReportResponse])
 async def weekly_report(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    return await food_service.get_weekly_report(db, current_user.id)
+    return ApiResponse.success(await food_service.get_weekly_report(db, current_user.id))

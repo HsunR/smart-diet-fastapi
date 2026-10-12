@@ -33,6 +33,6 @@ async def client(db_session: AsyncSession):
 async def auth_client(client, monkeypatch):
     monkeypatch.setattr(settings, "allow_mock_login", True)
     resp = await client.post("/api/v1/users/login", json={"code": "mock"})
-    token = resp.json()["token"]
+    token = resp.json()["data"]["token"]
     client.headers = {"Authorization": f"Bearer {token}"}
     return client

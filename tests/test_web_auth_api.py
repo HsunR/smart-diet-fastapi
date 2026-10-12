@@ -9,7 +9,7 @@ async def test_register_and_login_web_account(client):
         "nickname": "网页用户",
     })
     assert registration.status_code == 201
-    created = registration.json()
+    created = registration.json()["data"]
     assert created["isNew"] is True
     assert created["user"]["nickname"] == "网页用户"
     assert created["user"]["openid"].startswith("web_")
@@ -19,8 +19,9 @@ async def test_register_and_login_web_account(client):
         "password": "strong-password-123",
     })
     assert login.status_code == 200
-    assert login.json()["isNew"] is False
-    assert login.json()["token"]
+    assert login.json()["code"] == 0
+    assert login.json()["data"]["isNew"] is False
+    assert login.json()["data"]["token"]
 
 
 @pytest.mark.asyncio

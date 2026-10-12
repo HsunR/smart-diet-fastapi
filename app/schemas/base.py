@@ -1,6 +1,7 @@
-import re
 import warnings
-from pydantic import BaseModel, ConfigDict
+from typing import Generic, TypeVar
+
+from pydantic import BaseModel, ConfigDict, Field
 
 # Suppress Pydantic v2 alias generator warnings
 warnings.filterwarnings("ignore", message=".*alias.*Field.*", category=UserWarning)
@@ -20,3 +21,19 @@ class CamelModel(BaseModel):
         populate_by_name=True,  # 同时允许 snake_case 与 camelCase 输入。
         from_attributes=True,  # 支持从 SQLAlchemy ORM 对象构建响应。
     )
+
+
+ResponseDataT = TypeVar("ResponseDataT")
+
+
+class ApiResponse(CamelModel, Generic[ResponseDataT]):
+    """统一 HTTP API 响应外层；实际业务数据始终放在 data 中。"""
+
+    code: int = Field(default=0, description="业务状态码；0 表示成功，其余值与 HTTP 错误语义对应")
+    message: str = Field(default="success", description="面向调用方的响应说明")
+    data: ResponseDataT | None = Field(default=None, description="实际业务响应数据")
+
+    @classmethod
+    def success(cls, data: ResponseDataT | None = None, message: str = "success") -> "ApiResponse[ResponseDataT]":
+        """创建统一的成功响应。"""
+        return cls(code=0, message=message, data=data)

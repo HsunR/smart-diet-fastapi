@@ -19,8 +19,6 @@ async def create_record(db: AsyncSession, user_id: UUID, data: FoodRecordCreate)
         positive_tags=data.positive_tags,
         negative_tags=data.negative_tags,
         price=data.price,
-        foods=[f.model_dump() for f in data.foods],
-        meal_overview=data.meal_overview.model_dump(),
         image_url=data.image_url,
         rating=data.rating,
     )
@@ -67,10 +65,6 @@ async def update_record(db: AsyncSession, user_id: UUID, record_id: UUID, data: 
     if not record:
         raise NotFound("记录不存在")
     update_data = data.model_dump(exclude_unset=True)
-    if "foods" in update_data:
-        update_data["foods"] = [f.model_dump() for f in data.foods]
-    if "meal_overview" in update_data:
-        update_data["meal_overview"] = data.meal_overview.model_dump()
     for field, value in update_data.items():
         setattr(record, field, value)
     await db.flush()
@@ -86,8 +80,7 @@ async def get_weekly_report(db: AsyncSession, user_id: UUID) -> WeeklyReportResp
     scores = []
     score_trend = []
     for r in records:
-        overview = r.meal_overview or {}
-        score = overview.get("overall_health_score", 60)
+        score = r.rating or 0
         scores.append(score)
         score_trend.append({"date": str(r.date), "score": score})
 
@@ -99,5 +92,5 @@ async def get_weekly_report(db: AsyncSession, user_id: UUID) -> WeeklyReportResp
         total_meals=len(records),
         avg_score=avg_score,
         score_trend=score_trend,
-        report=f"本周共记录 {len(records)} 餐，平均健康分 {avg_score}",
+        report=f"本周共记录 {len(records)} 餐，平均星级评分 {avg_score}",
     )
