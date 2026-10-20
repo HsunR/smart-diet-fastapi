@@ -10,6 +10,7 @@ from app.schemas.report import WeeklyReportResponse
 
 
 async def create_record(db: AsyncSession, user_id: UUID, data: FoodRecordCreate) -> FoodRecord:
+    image_urls = data.image_urls if "image_urls" in data.model_fields_set else ([data.image_url] if data.image_url else [])
     record = FoodRecord(
         user_id=user_id,
         date=data.date,
@@ -19,7 +20,8 @@ async def create_record(db: AsyncSession, user_id: UUID, data: FoodRecordCreate)
         positive_tags=data.positive_tags,
         negative_tags=data.negative_tags,
         price=data.price,
-        image_url=data.image_url,
+        image_url=image_urls[0] if image_urls else "",
+        image_urls=image_urls,
         rating=data.rating,
     )
     db.add(record)
@@ -65,6 +67,12 @@ async def update_record(db: AsyncSession, user_id: UUID, record_id: UUID, data: 
     if not record:
         raise NotFound("记录不存在")
     update_data = data.model_dump(exclude_unset=True)
+    if "image_urls" in update_data:
+        update_data["image_urls"] = update_data["image_urls"] or []
+        update_data["image_url"] = update_data["image_urls"][0] if update_data["image_urls"] else ""
+    elif "image_url" in update_data:
+        update_data["image_url"] = update_data["image_url"] or ""
+        update_data["image_urls"] = [update_data["image_url"]] if update_data["image_url"] else []
     for field, value in update_data.items():
         setattr(record, field, value)
     await db.flush()

@@ -1,5 +1,4 @@
 services:
-  name: smartdietBackend
   db:
     image: postgres:16-alpine
     environment:
@@ -29,7 +28,7 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-smartdiet}
       MINIO_SECURE: "false"
-      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000}
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9002}
     depends_on:
       - db
       - minio
@@ -43,7 +42,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - '9000:9000'
+      - '9002:9000'
       - '9001:9001'
     volumes:
       - minio_data:/data

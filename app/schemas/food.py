@@ -1,7 +1,7 @@
 from datetime import datetime, date as Date
 from uuid import UUID
-from typing import Optional
-from pydantic import Field
+from typing import Annotated, Optional
+from pydantic import Field, model_validator
 
 from app.schemas.base import CamelModel
 
@@ -26,6 +26,9 @@ class MealOverview(CamelModel):
     summary: str = Field(default="", description="餐食总结")
 
 
+PhotoUrl = Annotated[str, Field(min_length=1, max_length=512)]
+
+
 class FoodRecordCreate(CamelModel):
     """新建饮食记录的请求 DTO。"""
     date: Date = Field(description="实际就餐日期")
@@ -35,7 +38,8 @@ class FoodRecordCreate(CamelModel):
     positive_tags: list[str] = Field(default_factory=list, description="用户认为好的标签")
     negative_tags: list[str] = Field(default_factory=list, description="用户不喜欢的标签")
     price: Optional[float] = Field(default=None, ge=0, description="餐费金额，可选且不能为负")
-    image_url: str = Field(default="", description="餐食图片 URL")
+    image_url: str = Field(default="", max_length=512, description="首张餐食图片 URL，兼容旧客户端")
+    image_urls: list[PhotoUrl] = Field(default_factory=list, max_length=6, description="餐食图片 URL，最多 6 张")
     rating: int = Field(default=0, ge=0, le=5, description="用户星级评分，范围 0–5")
 
 
@@ -49,6 +53,7 @@ class FoodRecordUpdate(CamelModel):
     negative_tags: Optional[list[str]] = Field(default=None, description="用户不喜欢的标签")
     price: Optional[float] = Field(default=None, ge=0, description="餐费金额")
     image_url: Optional[str] = Field(default=None, max_length=512, description="餐食图片 URL")
+    image_urls: Optional[list[PhotoUrl]] = Field(default=None, max_length=6, description="餐食图片 URL，最多 6 张")
     rating: Optional[int] = Field(default=None, ge=0, le=5, description="星级评分，范围 0–5")
 
 
@@ -64,8 +69,15 @@ class FoodRecordResponse(CamelModel):
     negative_tags: list[str] = Field(default_factory=list, description="用户不喜欢的标签")
     price: Optional[float] = Field(default=None, description="餐费金额")
     image_url: str = Field(description="餐食图片 URL")
+    image_urls: list[str] = Field(default_factory=list, description="餐食图片 URL 列表")
     rating: Optional[int] = Field(default=0, description="用户星级评分")
     created_at: datetime = Field(description="记录创建时间")
+
+    @model_validator(mode="after")
+    def include_legacy_photo(self):
+        if not self.image_urls and self.image_url:
+            self.image_urls = [self.image_url]
+        return self
 
 
 class FoodRecognitionRequest(CamelModel):
