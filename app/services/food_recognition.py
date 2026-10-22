@@ -1,7 +1,6 @@
 import json
 from typing import TypedDict, Optional
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.graph import StateGraph, START, END
 
 from app.services.ai import get_vision_llm
 from app.schemas.food import FoodItem, MealOverview
@@ -118,14 +117,6 @@ async def recognize_food(state: FoodRecognitionState) -> FoodRecognitionState:
         return {**state, "foods": foods, "meal_overview": overview, "dietary_advice": dietary_advice}
     except Exception as e:
         return {**state, "error": str(e)}
-
-
-def build_food_recognition_graph() -> StateGraph:
-    builder = StateGraph(FoodRecognitionState)
-    builder.add_node("recognize_food", recognize_food)
-    builder.add_edge(START, "recognize_food")
-    builder.add_edge("recognize_food", END)
-    return builder.compile()
 
 
 async def recognize_food_stream(image_url: str, user_profile: dict):

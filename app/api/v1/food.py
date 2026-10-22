@@ -13,7 +13,7 @@ from app.schemas.base import ApiResponse
 from app.schemas.food import FoodRecordCreate, FoodRecordUpdate, FoodRecordResponse, FoodRecognitionRequest, FoodRecognitionResponse
 from app.schemas.report import WeeklyReportResponse
 from app.services import food as food_service
-from app.workflows.food_recognition import build_food_recognition_graph, FoodRecognitionState, recognize_food_stream
+from app.services.food_recognition import recognize_food as run_food_recognition, FoodRecognitionState, recognize_food_stream
 
 router = APIRouter(prefix="/records", tags=["food_records"])
 
@@ -53,7 +53,6 @@ async def recognize_food(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    graph = build_food_recognition_graph()
     initial_state: FoodRecognitionState = {
         "image_url": req.image_url,
         "user_id": str(current_user.id),
@@ -65,7 +64,7 @@ async def recognize_food(
         "dietary_advice": "",
         "error": None,
     }
-    result = await graph.ainvoke(initial_state)
+    result = await run_food_recognition(initial_state)
     if result.get("error"):
         raise BadRequest(result["error"])
     return ApiResponse.success(FoodRecognitionResponse(

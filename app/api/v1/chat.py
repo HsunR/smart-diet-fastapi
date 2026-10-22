@@ -11,7 +11,7 @@ from app.schemas.base import ApiResponse
 from app.schemas.chat import MessageCreate, MessageResponse, ConversationResponse
 from app.services import chat as chat_service
 from app.services.ai import get_streaming_llm
-from app.workflows.chat import build_chat_graph, ChatState, CHAT_PROMPT
+from app.services.chat_response import run_chat, ChatState, CHAT_PROMPT
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -59,7 +59,6 @@ async def send_message(
     history = [{"role": m.role, "content": m.content} for m in history_messages[-10:]]
     await chat_service.add_message(db, conv_id, "user", req.content)
 
-    graph = build_chat_graph()
     state: ChatState = {
         "message": req.content,
         "user_profile": {"age": current_user.age, "weight": float(current_user.weight)},
@@ -68,7 +67,7 @@ async def send_message(
         "intent": None,
         "reply": None,
     }
-    result = await graph.ainvoke(state)
+    result = await run_chat(state)
     reply = result.get("reply", "抱歉，暂时无法回复")
 
     msg = await chat_service.add_message(db, conv_id, "assistant", reply, {"intent": result.get("intent")})

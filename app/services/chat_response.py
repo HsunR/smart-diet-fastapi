@@ -1,8 +1,6 @@
 import json
-from typing import TypedDict, Optional, Literal
+from typing import TypedDict, Optional
 from langchain_core.messages import HumanMessage, SystemMessage
-from langgraph.graph import StateGraph, START, END
-from langgraph.types import Command
 
 from app.services.ai import get_llm
 
@@ -33,20 +31,13 @@ CHAT_PROMPT = """你是 AI 营养师助手。帮助用户记录饮食、提供�
 用温暖专业的语气回复，简洁明了。"""
 
 
-async def classify_intent(state: ChatState) -> Command[Literal["handle_advice", "handle_query", "handle_chat", "handle_image"]]:
+async def classify_intent(state: ChatState) -> str:
     llm = get_llm()
     prompt = INTENT_CLASSIFIER_PROMPT.format(message=state["message"])
     response = await llm.ainvoke([HumanMessage(content=prompt)])
     intent = response.content.strip().lower()
     intent = intent if intent in ("advice", "query", "chat", "image") else "chat"
-    state["intent"] = intent
-    goto_map = {
-        "advice": "handle_advice",
-        "query": "handle_query",
-        "chat": "handle_chat",
-        "image": "handle_image",
-    }
-    return Command(goto=goto_map[intent], update={"intent": intent})
+    return intent
 
 
 async def handle_chat(state: ChatState) -> ChatState:
@@ -63,10 +54,6 @@ async def handle_chat(state: ChatState) -> ChatState:
     return {**state, "reply": response.content}
 
 
-async def handle_advice(state: ChatState) -> ChatState:
-    return await handle_chat(state)
-
-
 async def handle_query(state: ChatState) -> ChatState:
     return {**state, "reply": "请通过报告页面查看饮食记录"}
 
@@ -75,16 +62,11 @@ async def handle_image(state: ChatState) -> ChatState:
     return {**state, "reply": "请拍照上传以识别食物"}
 
 
-def build_chat_graph() -> StateGraph:
-    builder = StateGraph(ChatState)
-    builder.add_node("classify_intent", classify_intent)
-    builder.add_node("handle_advice", handle_advice)
-    builder.add_node("handle_query", handle_query)
-    builder.add_node("handle_chat", handle_chat)
-    builder.add_node("handle_image", handle_image)
-    builder.add_edge(START, "classify_intent")
-    builder.add_edge("handle_advice", END)
-    builder.add_edge("handle_query", END)
-    builder.add_edge("handle_chat", END)
-    builder.add_edge("handle_image", END)
-    return builder.compile()
+async def run_chat(state: ChatState) -> ChatState:
+    intent = await classify_intent(state)
+    state = {**state, "intent": intent}
+    if intent == "query":
+        return await handle_query(state)
+    if intent == "image":
+        return await handle_image(state)
+    return await handle_chat(state)
