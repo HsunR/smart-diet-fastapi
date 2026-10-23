@@ -4,8 +4,7 @@ import binascii
 from starlette.concurrency import run_in_threadpool
 
 from app.services.storage import get_storage
-
-MAX_IMAGE_BYTES = 10 * 1024 * 1024
+from app.core.upload_limits import MAX_IMAGE_BYTES
 
 
 class ImagePreparationError(ValueError):

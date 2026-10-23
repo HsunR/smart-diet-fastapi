@@ -17,3 +17,4 @@ pytest-asyncio==0.24.0
 pytest-cov==6.0.0
 aiosqlite==0.20.0
 minio==7.2.15
+pillow==12.2.0

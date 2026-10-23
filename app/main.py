@@ -9,6 +9,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.database import engine, Base
 from app.core.exceptions import AppException
+from app.core.upload_middleware import UploadBodyLimitMiddleware
 from app.schemas.base import ApiResponse
 from app.api.v1.user import router as user_router
 from app.api.v1.food import router as food_router
@@ -30,6 +31,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SmartDiet API", version="1.0.0", lifespan=lifespan)
+app.add_middleware(UploadBodyLimitMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

@@ -42,12 +42,14 @@ async def login(db: AsyncSession, code: str) -> tuple[User, str, bool]:
     if not code:
         raise BadRequest("登录 code 不能为空")
 
-    if settings.allow_mock_login and (code == "mock" or code.startswith("mock_")):
+    if code == "mock" or code.startswith("mock_"):
+        if not settings.allow_mock_login:
+            raise BadRequest("模拟登录未开启")
         openid = await _mock_openid(code)
-    elif settings.wechat_secret:
-        openid = await _wechat_openid(code)
     else:
-        openid = await _mock_openid(code)
+        if not settings.wechat_appid or not settings.wechat_secret:
+            raise InternalError("微信登录暂不可用，请使用账号密码登录")
+        openid = await _wechat_openid(code)
 
     result = await db.execute(select(User).where(User.openid == openid))
     user = result.scalar_one_or_none()
