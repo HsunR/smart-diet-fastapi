@@ -74,3 +74,47 @@ async def test_photo_limit_is_validated(auth_client):
         "imageUrls": [f"https://objects.example.test/{index}.jpg" for index in range(7)],
     })
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_custom_feedback_tags_survive_save_and_read(auth_client):
+    response = await auth_client.post("/api/v1/records", json={
+        "date": str(date.today()), "mealType": "lunch", "name": "鸡蛋面",
+        "description": "面条配鸡蛋", "positiveTags": ["面条很筋道", "好吃"],
+        "negativeTags": ["汤可以再热一点"],
+    })
+    assert response.status_code == 201
+    record_id = response.json()["data"]["id"]
+    listed = await auth_client.get(f"/api/v1/records?date={date.today()}")
+    saved = next(record for record in listed.json()["data"] if record["id"] == record_id)
+    assert saved["positiveTags"] == ["面条很筋道", "好吃"]
+    assert saved["negativeTags"] == ["汤可以再热一点"]
+
+
+@pytest.mark.asyncio
+async def test_batch_recognition_endpoint_and_legacy_single_photo(auth_client, monkeypatch):
+    from app.api.v1 import food
+    batches = []
+
+    async def fake_stream(urls, profile):
+        batches.append(urls)
+        yield {"type": "suggestion", "data": {"field": "name", "value": "牛肉配米饭"}}
+        yield {"type": "done", "data": {}}
+
+    monkeypatch.setattr(food, "recognize_food_stream", fake_stream)
+    urls = ["https://example.test/beef.jpg", "https://example.test/rice.jpg"]
+    response = await auth_client.post("/api/v1/records/recognize/stream", json={"imageUrls": urls})
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers["content-type"]
+    assert '"type": "suggestion"' in response.text
+    assert batches == [urls]
+    legacy = await auth_client.post("/api/v1/records/recognize/stream", json={"imageUrl": urls[0]})
+    assert legacy.status_code == 200
+    assert batches[-1] == [urls[0]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [{}, {"imageUrls": []}, {"imageUrls": [""]}, {"imageUrls": [" "]}, {"imageUrls": ["https://example.test/a.jpg"] * 7}])
+async def test_batch_recognition_requires_one_to_six_photos(auth_client, payload):
+    response = await auth_client.post("/api/v1/records/recognize/stream", json=payload)
+    assert response.status_code == 422

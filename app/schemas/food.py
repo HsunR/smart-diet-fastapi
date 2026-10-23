@@ -2,6 +2,7 @@ from datetime import datetime, date as Date
 from uuid import UUID
 from typing import Annotated, Optional
 from pydantic import Field, model_validator
+from pydantic_core import PydanticCustomError
 
 from app.schemas.base import CamelModel
 
@@ -84,6 +85,21 @@ class FoodRecognitionRequest(CamelModel):
     """请求 AI 识别餐食图片的 DTO。"""
     image_url: str = Field(description="要识别的餐食图片 URL")
     user_feedback: str = Field(default="", description="用户对已有识别结果的补充或纠正")
+
+
+class FoodRecognitionStreamRequest(CamelModel):
+    """一次对话中联合识别整餐照片，兼容旧版单图请求。"""
+    image_url: str = Field(default="", max_length=512)
+    image_urls: list[PhotoUrl] = Field(default_factory=list, max_length=6)
+
+    @model_validator(mode="after")
+    def require_photos(self):
+        """将旧版单图字段补入列表，并拒绝空图片列表或空白地址。"""
+        if not self.image_urls and self.image_url.strip():
+            self.image_urls = [self.image_url.strip()]
+        if not self.image_urls or any(not url.strip() for url in self.image_urls):
+            raise PydanticCustomError("meal_photos", "请提供 1–6 张餐食照片")
+        return self
 
 
 class FoodRecognitionResponse(CamelModel):

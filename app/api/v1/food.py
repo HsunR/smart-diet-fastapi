@@ -10,7 +10,7 @@ from app.core.dependencies import get_current_user
 from app.core.exceptions import BadRequest
 from app.models.user import User
 from app.schemas.base import ApiResponse
-from app.schemas.food import FoodRecordCreate, FoodRecordUpdate, FoodRecordResponse, FoodRecognitionRequest, FoodRecognitionResponse
+from app.schemas.food import FoodRecordCreate, FoodRecordUpdate, FoodRecordResponse, FoodRecognitionRequest, FoodRecognitionResponse, FoodRecognitionStreamRequest
 from app.schemas.report import WeeklyReportResponse
 from app.services import food as food_service
 from app.services.food_recognition import recognize_food as run_food_recognition, FoodRecognitionState, recognize_food_stream
@@ -76,14 +76,14 @@ async def recognize_food(
 
 @router.post("/recognize/stream")
 async def recognize_food_stream_endpoint(
-    req: FoodRecognitionRequest,
+    req: FoodRecognitionStreamRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     user_profile = {"age": current_user.age, "weight": float(current_user.weight)}
 
     async def event_generator():
-        async for event in recognize_food_stream(req.image_url, user_profile):
+        async for event in recognize_food_stream(req.image_urls, user_profile):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
