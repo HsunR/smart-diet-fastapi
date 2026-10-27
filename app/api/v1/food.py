@@ -15,7 +15,6 @@ from app.schemas.report import WeeklyReportResponse
 from app.services import food as food_service
 from app.services.food_recognition import recognize_food as run_food_recognition, FoodRecognitionState, recognize_food_stream
 from app.services.images import owned_images, record_responses
-from app.core.abuse_protection import guard_recognition
 
 router = APIRouter(prefix="/records", tags=["food_records"])
 
@@ -52,7 +51,7 @@ async def update_record(record_id: UUID, data: FoodRecordUpdate, current_user: U
 @router.post("/recognize", response_model=ApiResponse[FoodRecognitionResponse])
 async def recognize_food(
     req: FoodRecognitionRequest,
-    current_user: User = Depends(guard_recognition),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
     image_url = (await owned_images(db, current_user.id, [req.image_url]))[0]
@@ -80,7 +79,7 @@ async def recognize_food(
 @router.post("/recognize/stream")
 async def recognize_food_stream_endpoint(
     req: FoodRecognitionStreamRequest,
-    current_user: User = Depends(guard_recognition),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
     user_profile = {"age": current_user.age, "weight": float(current_user.weight)}

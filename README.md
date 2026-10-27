@@ -2,7 +2,7 @@
 
 ## 项目简介
 
-SmartDiet 后端是一个基于 FastAPI 的异步 Web 服务，提供用户管理、饮食记录和食物识别等功能。使用 PostgreSQL 保存业务数据，Redis 保存共享限流配额和 AI 并发租约，支持 Docker 容器化部署。
+SmartDiet 后端是一个基于 FastAPI 的异步 Web 服务，提供用户管理、饮食记录和食物识别等功能。使用 PostgreSQL 保存业务数据，保留 Redis 基础服务供后续扩展，支持 Docker 容器化部署。
 
 用户上传的图片存储在 MinIO 对象存储中，而不是应用容器本地磁盘。对象存储使用私有桶。上传和查询接口向前端返回短时签名 URL；数据库只保存稳定对象引用，视觉模型通过后端读取并转换为 Base64 接收图片。
 
@@ -23,7 +23,6 @@ SmartDiet 后端是一个基于 FastAPI 的异步 Web 服务，提供用户管�
 ### 手动方式
 - Python 3.12+
 - PostgreSQL 16+
-- Redis 7.4+
 - pip 或 poetry
 
 ## 快速启动
@@ -121,9 +120,9 @@ SmartDiet 后端是一个基于 FastAPI 的异步 Web 服务，提供用户管�
    DATABASE_URL=postgresql+asyncpg://smartdiet:smartdiet@localhost:5432/smartdiet
    ```
 
-4. **启动 Redis 并运行数据库迁移**
+4. **运行数据库迁移**
 
-   本地 Python 运行时，另行启动带密码的 Redis，设置 `REDIS_URL` 和 `REDIS_PASSWORD`。Compose 的 Redis 默认不对宿主机开放，不能直接用 `localhost:6379` 连接容器。
+   当前应用不依赖 Redis，本地 Python 运行无需启动 Redis。
    ```bash
    alembic upgrade head
    ```
@@ -141,7 +140,6 @@ SmartDiet 后端是一个基于 FastAPI 的异步 Web 服务，提供用户管�
 |--------|------|--------|
 | `REDIS_URL` | Redis 连接地址，不在 URL 中放密码 | `redis://localhost:6379/0` |
 | `REDIS_PASSWORD` | Redis 密码；Compose 必填 | 无 |
-| `REDIS_KEY_PREFIX` | 不同部署的 Redis 键命名空间 | `smartdiet` |
 | `DATABASE_URL` | 数据库连接字符串 | `postgresql+asyncpg://smartdiet:smartdiet@localhost:5432/smartdiet` |
 | `JWT_SECRET` | JWT 签名密钥 | `change-me-in-production` |
 | `JWT_ALGORITHM` | JWT 算法 | `HS256` |
@@ -300,32 +298,11 @@ docker compose up -d --build
 
 `POST /api/v1/upload/access` 接收 `{"imageUrls": ["图片引用或过期签名 URL"]}`，返回同顺序的新签名 URL（最多 6 张），需要 Bearer 登录及归属校验。识别仅接收当前用户已上传的图片。闲聊 API、会话服务、模型及本地旧草稿迁移已移除。
 
-## Redis 与接口防刷
+## Redis 基础服务
 
-锁定 `fastapi-limiter==0.2.0`，使用其 `RateLimiter` 接入 HTTP 检查，以底层 `pyrate-limiter==4.5.1` 的异步 `RedisBucket` 执行滑动窗口算法。图片通过底层 `weight` 按张计费；同一用户的识别分钟/24 小时窗口在一个 Lua 操作中共同扣减。封装只补充 Redis 服务端时间、日志过期、清理和脚本重载，不自行实现配额算法。每次调用独立 bucket 对象，共享同一 Redis 键，不建立无界的进程内用户缓存或清理线程。
+Compose 保留 Redis 服务及密码认证、AOF 持久化和健康检查，不发布宿主机端口。当前业务未使用 Redis，应用启动不连接或依赖 Redis。
 
-IP 检查在 ASGI 中间件内、请求体解析前执行。fastapi-limiter 0.2.0 会枚举路由，与当前 FastAPI 的延迟包含路由结构不匹配；这里向它提供不含路由的请求视图，使用显式“策略＋身份”Redis 键确定范围。单图/批量等接口因此能共用配额，不依赖路由序号。升级库时应保留相关回归验证。
-
-Redis 故障时受保护接口返回 503 和 `Retry-After: 5`；启动时连接失败会阻止服务启动，没有内存或数据库降级。退出时关闭连接池。Compose 提供密码认证、健康检查、AOF 持久化、256 MiB 内存上限与 `noeviction`，Redis 不向宿主机发布端口。达到内存上限时写入失败也会拒绝受保护请求，需扩容或排查。AOF `everysec` 在 Redis 故障时可能丢失最近约一秒配额，限流不应作为财务计费账本。
-
-| 环境变量 | 默认值 | 限制范围 |
-| --- | --- | --- |
-| `LOGIN_IP_PER_MINUTE` | 20 | 微信与网页登录共用 IP 窗口 |
-| `LOGIN_ACCOUNT_PER_15_MINUTES` | 10 | 网页账号归一化后跨 IP 计数 |
-| `REGISTER_IP_PER_HOUR` | 5 | 每 IP 注册尝试 |
-| `UPLOAD_IP_PER_MINUTE` | 60 | 单图与批量上传共用 IP 窗口 |
-| `UPLOAD_USER_IMAGES_PER_DAY` | 200 | 每用户滚动 24 小时照片数，批量按张计数 |
-| `RECOGNITION_IP_PER_MINUTE` | 30 | 单图与流式识别共用 IP 窗口 |
-| `RECOGNITION_USER_PER_MINUTE` | 6 | 每用户识别次数 |
-| `RECOGNITION_USER_PER_DAY` | 100 | 每用户滚动 24 小时识别次数 |
-| `RECOGNITION_GLOBAL_CONCURRENCY` | 8 | 所有实例同时识别的请求数 |
-| `RECOGNITION_USER_CONCURRENCY` | 1 | 单用户同时识别的请求数 |
-
-滑动窗口内已放行的尝试均计数，包括后续校验或模型失败；被配额拒绝的请求不继续扣减。AI 用户配额在获取并发租约前扣减，被并发限制拒绝的尝试也会占用频率配额。超限返回统一 JSON、HTTP 429 和 `Retry-After` 秒数。图片地址刷新另限每 IP 每分钟 120 次。
-
-AI 并发使用 Redis 原子租约（独立于请求频率算法），用户和全局容量同时检查。租约覆盖整个流式响应，完成、异常及断开连接均释放；进程退出后最多 120 秒失效。长请求每 30 秒续租，续租失败则取消请求。释放按随机令牌匹配，不会释放已过期后被其他请求占用的名额。限流和租约均以 Redis 服务端时间为准，避免应用时钟偏差或并发请求到达乱序绕过窗口；返回等待时间时转换回库的时间基准。
-
-应用只使用 ASGI 服务器提供的客户端地址，不直接读取 `X-Forwarded-For`。反向代理需正确传递来源 IP，并只让 Uvicorn 信任实际代理地址。
+接口频率限制、账号尝试限制、图片数量配额和 AI 并发租约均已移除，待后续重新设计。图片上传的请求体大小、单张大小、张数、像素和格式校验仍然有效，登录鉴权及图片归属校验也保留。
 
 ## 依赖安全验证
 

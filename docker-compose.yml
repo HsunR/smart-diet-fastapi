@@ -25,7 +25,6 @@ services:
       DATABASE_URL: postgresql+asyncpg://smartdiet:smartdiet@db:5432/smartdiet
       REDIS_URL: redis://redis:6379/0
       REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
-      REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-smartdiet}
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -37,8 +36,6 @@ services:
         condition: service_started
       minio:
         condition: service_started
-      redis:
-        condition: service_healthy
     volumes:
       - .:/app
 

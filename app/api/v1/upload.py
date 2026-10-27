@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import Field
@@ -12,7 +12,6 @@ from app.core.upload_limits import MAX_IMAGE_BYTES, MAX_UPLOAD_IMAGES
 from app.models.user import User
 from app.models.uploaded_image import UploadedImage
 from app.core.database import get_db
-from app.core.abuse_protection import limit_upload
 from app.schemas.base import ApiResponse, CamelModel
 from app.schemas.food import PhotoUrl
 from app.services.images import image_access
@@ -23,18 +22,16 @@ router = APIRouter(prefix="/upload", tags=["upload"])
 
 
 @router.post("", response_model=ApiResponse[dict[str, str]])
-async def upload_file(request: Request, file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db, scope="function")):
+async def upload_file(file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db, scope="function")):
     """上传用户选择的饮食图片；该操作不触发 AI 识别。"""
-    await limit_upload(request, current_user.id, 1)
     return ApiResponse.success(await _save_image(db, current_user.id, *await _read_image(file)))
 
 
 @router.post("/images", response_model=ApiResponse[list[dict[str, str]]])
-async def upload_images(request: Request, files: list[UploadFile] = File(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db, scope="function")):
+async def upload_images(files: list[UploadFile] = File(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db, scope="function")):
     """按上传顺序保存最多六张饮食照片。"""
     if len(files) > MAX_UPLOAD_IMAGES:
         raise HTTPException(status_code=400, detail="最多上传 6 张照片")
-    await limit_upload(request, current_user.id, len(files))
     # Validate the entire batch before storing any files.
     images = [await _read_image(file) for file in files]
     return ApiResponse.success([await _save_image(db, current_user.id, *image) for image in images])

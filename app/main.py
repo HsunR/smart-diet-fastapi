@@ -9,11 +9,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.concurrency import run_in_threadpool
 
 from app.core.database import engine
-from app.core.config import settings
-from app.core.redis import create_redis
 from app.core.exceptions import AppException
 from app.core.upload_middleware import UploadBodyLimitMiddleware
-from app.core.abuse_protection import AbuseProtection, AbuseProtectionMiddleware
 from app.schemas.base import ApiResponse
 from app.api.v1.user import router as user_router
 from app.api.v1.food import router as food_router
@@ -26,21 +23,15 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    redis = create_redis()
     try:
-        await redis.ping()
-        app.state.redis = redis
-        app.state.abuse_protection = AbuseProtection(redis, settings.redis_key_prefix)
         await run_in_threadpool(get_storage().ensure_bucket)
         yield
     finally:
-        await redis.aclose()
         await engine.dispose()
 
 
 app = FastAPI(title="SmartDiet API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(UploadBodyLimitMiddleware)
-app.add_middleware(AbuseProtectionMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,7 +39,6 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Retry-After"],
 )
 
 
