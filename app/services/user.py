@@ -1,8 +1,8 @@
-from uuid import UUID, uuid4
+from uuid import UUID
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from jose import jwt
+import jwt
 import httpx
 import bcrypt
 
@@ -10,6 +10,8 @@ from app.core.config import settings
 from app.core.exceptions import BadRequest, InternalError
 from app.models.user import User
 from app.schemas.user import UserUpdate
+from app.services.images import owned_images
+from app.services.storage import get_storage
 
 
 WECHAT_CODE2SESSION = "https://api.weixin.qq.com/sns/jscode2session"
@@ -81,9 +83,7 @@ async def register_web_account(db: AsyncSession, account: str, password: str, ni
     if result.scalar_one_or_none():
         raise BadRequest("该账号已被注册")
 
-    # Keep `openid` populated for compatibility with the existing data model.
     user = User(
-        openid=f"web_{uuid4().hex}",
         account=normalized_account,
         password_hash=_hash_password(password),
         nickname=nickname.strip(),
@@ -114,6 +114,13 @@ async def update_user(db: AsyncSession, user_id: UUID, data: UserUpdate) -> User
     if not user:
         raise BadRequest("用户不存在")
     for field, value in data.model_dump(exclude_unset=True).items():
+        if field == "avatar" and value:
+            try:
+                get_storage().object_name(value)
+            except ValueError:
+                pass
+            else:
+                value = (await owned_images(db, user_id, [value]))[0]
         setattr(user, field, value)
     await db.flush()
     return user

@@ -1,6 +1,7 @@
 from uuid import UUID
 from fastapi import Depends, Header
-from jose import jwt, JWTError
+import jwt
+from jwt import PyJWTError as JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +13,7 @@ from app.models.user import User
 
 async def get_current_user(
     authorization: str = Header(..., description="Bearer token"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> User:
     if not authorization.startswith("Bearer "):
         raise Unauthorized("无效的认证头")

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import Column, String, SmallInteger, Numeric, DateTime
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Uuid as UUID
 
 from app.core.database import Base
 
@@ -12,7 +12,7 @@ class User(Base):
     __table_args__ = {"comment": "用户表：登录身份、个人资料与饮食偏好"}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, comment="用户主键")
-    openid = Column(String(128), unique=True, nullable=False, index=True, comment="微信身份标识；网页用户使用系统生成的兼容值")
+    openid = Column(String(128), unique=True, nullable=True, index=True, comment="微信身份标识；网页账号为空")
     account = Column(String(32), unique=True, nullable=True, index=True, comment="网页端登录账号")
     password_hash = Column(String(128), nullable=True, comment="密码哈希，绝不保存明文密码")
     nickname = Column(String(64), default="", comment="用户展示昵称")

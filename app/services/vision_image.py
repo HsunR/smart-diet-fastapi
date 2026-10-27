@@ -1,5 +1,4 @@
 import base64
-import binascii
 
 from starlette.concurrency import run_in_threadpool
 
@@ -27,25 +26,13 @@ def _image_mime(content: bytes) -> str:
 async def prepare_image_data_url(url: str) -> str:
     """将上传照片转换为视觉模型可直接读取的 Base64 Data URL。
 
-    普通地址从当前 MinIO 存储读取；已有 Data URL 先解码校验再统一编码。
+    仅接收入口已经校验过归属的稳定引用，从当前私有 MinIO 存储读取。
     限制单张图片大小，并按实际内容设置 MIME 类型；失败时抛出可展示异常。
     """
-    if url.startswith("data:"):
-        header, separator, encoded = url.partition(",")
-        if not separator or not header.startswith("data:image/") or not header.endswith(";base64"):
-            raise ImagePreparationError("图片 Base64 格式无效，请重新上传")
-        if len(encoded) > 4 * ((MAX_IMAGE_BYTES + 2) // 3):
-            raise ImagePreparationError("单张识别照片不能超过 10 MB，请压缩后重新上传")
-        try:
-            content = base64.b64decode(encoded, validate=True)
-        except (ValueError, binascii.Error) as exc:
-            raise ImagePreparationError("图片 Base64 格式无效，请重新上传") from exc
-    else:
-        try:
-            # MinIO 使用同步客户端，在线程池中读取，避免阻塞异步请求。
-            content = await run_in_threadpool(get_storage().read_image_bytes, url, MAX_IMAGE_BYTES)
-        except Exception as exc:
-            raise ImagePreparationError("无法读取餐食照片，请重新上传后再试") from exc
+    try:
+        content = await run_in_threadpool(get_storage().read_image_bytes, url, MAX_IMAGE_BYTES)
+    except Exception as exc:
+        raise ImagePreparationError("无法读取餐食照片，请重新上传后再试") from exc
     if not content:
         raise ImagePreparationError("餐食照片为空，请重新上传")
     if len(content) > MAX_IMAGE_BYTES:

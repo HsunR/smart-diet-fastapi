@@ -14,14 +14,6 @@ def _make_llm(model: str, temperature: float, streaming: bool = False) -> ChatOp
     )
 
 
-def get_llm() -> BaseChatModel:
-    return _make_llm(settings.llm_model, 0.7)
-
-
-def get_streaming_llm() -> BaseChatModel:
-    return _make_llm(settings.llm_model, 0.7, streaming=True)
-
-
 def get_vision_llm() -> BaseChatModel:
     model = settings.llm_vision_model or settings.llm_model
     return _make_llm(model, 0.3)

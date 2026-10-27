@@ -9,7 +9,7 @@ from app.schemas.base import CamelModel
 
 class UserCreate(CamelModel):
     """创建用户时的内部 DTO。"""
-    openid: str = Field(description="微信或系统生成的唯一身份标识")
+    openid: Optional[str] = Field(default=None, description="微信身份标识；网页账号为空")
     nickname: str = Field(default="", description="展示昵称")
     avatar: str = Field(default="", description="头像 URL")
     gender: int = Field(default=0, description="性别编码")
@@ -31,7 +31,7 @@ class UserUpdate(CamelModel):
 class UserResponse(CamelModel):
     """返回给前端的用户 VO，不包含账号密码等敏感字段。"""
     id: UUID = Field(description="用户主键")
-    openid: str = Field(description="用户身份标识")
+    openid: Optional[str] = Field(description="微信身份标识；网页账号为空")
     nickname: str = Field(description="展示昵称")
     avatar: str = Field(description="头像 URL")
     gender: int = Field(description="性别编码")

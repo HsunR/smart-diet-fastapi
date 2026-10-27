@@ -23,6 +23,9 @@ services:
       LLM_VISION_MODEL: ${LLM_VISION_MODEL}
       JWT_SECRET: ${JWT_SECRET}
       DATABASE_URL: postgresql+asyncpg://smartdiet:smartdiet@db:5432/smartdiet
+      REDIS_URL: redis://redis:6379/0
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-smartdiet}
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -30,10 +33,31 @@ services:
       MINIO_SECURE: "false"
       MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9002}
     depends_on:
-      - db
-      - minio
+      db:
+        condition: service_started
+      minio:
+        condition: service_started
+      redis:
+        condition: service_healthy
     volumes:
       - .:/app
+
+  redis:
+    image: redis:7.4-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+    command:
+      - /bin/sh
+      - -c
+      - exec redis-server --requirepass "$$REDIS_PASSWORD" --appendonly yes --appendfsync everysec --maxmemory 256mb --maxmemory-policy noeviction
+    healthcheck:
+      test: ["CMD-SHELL", 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
 
   minio:
     image: quay.io/minio/minio:latest
@@ -50,3 +74,4 @@ services:
 volumes:
   pgdata:
   minio_data:
+  redis_data:

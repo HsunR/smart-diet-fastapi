@@ -7,10 +7,11 @@ from app.core.exceptions import NotFound
 from app.models.food_record import FoodRecord
 from app.schemas.food import FoodRecordCreate, FoodRecordUpdate
 from app.schemas.report import WeeklyReportResponse
+from app.services.images import owned_images
 
 
 async def create_record(db: AsyncSession, user_id: UUID, data: FoodRecordCreate) -> FoodRecord:
-    image_urls = data.image_urls if "image_urls" in data.model_fields_set else ([data.image_url] if data.image_url else [])
+    image_urls = await owned_images(db, user_id, data.image_urls)
     record = FoodRecord(
         user_id=user_id,
         date=data.date,
@@ -20,7 +21,6 @@ async def create_record(db: AsyncSession, user_id: UUID, data: FoodRecordCreate)
         positive_tags=data.positive_tags,
         negative_tags=data.negative_tags,
         price=data.price,
-        image_url=image_urls[0] if image_urls else "",
         image_urls=image_urls,
         rating=data.rating,
     )
@@ -68,11 +68,7 @@ async def update_record(db: AsyncSession, user_id: UUID, record_id: UUID, data: 
         raise NotFound("记录不存在")
     update_data = data.model_dump(exclude_unset=True)
     if "image_urls" in update_data:
-        update_data["image_urls"] = update_data["image_urls"] or []
-        update_data["image_url"] = update_data["image_urls"][0] if update_data["image_urls"] else ""
-    elif "image_url" in update_data:
-        update_data["image_url"] = update_data["image_url"] or ""
-        update_data["image_urls"] = [update_data["image_url"]] if update_data["image_url"] else []
+        update_data["image_urls"] = await owned_images(db, user_id, update_data["image_urls"] or [])
     for field, value in update_data.items():
         setattr(record, field, value)
     await db.flush()

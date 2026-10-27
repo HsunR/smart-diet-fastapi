@@ -128,10 +128,10 @@ async def recognize_food(state: FoodRecognitionState) -> FoodRecognitionState:
         return {**state, "error": str(e)}
 
 
-async def recognize_food_stream(image_urls: str | list[str], user_profile: dict):
+async def recognize_food_stream(image_urls: list[str], user_profile: dict):
     """将同餐照片放入一次模型对话，逐条产出可回显的流式事件。
 
-    兼容单图地址；全部图片转换成功后才发起模型调用。
+    全部图片转换成功后才发起模型调用。
     suggestion 事件用于快速填写，done 表示结束，error 携带可展示提示。
     """
     from app.services.ai import get_streaming_vision_llm
@@ -139,7 +139,6 @@ async def recognize_food_stream(image_urls: str | list[str], user_profile: dict)
     prompt = FOOD_RECOGNITION_STREAM_PROMPT.format(
         user_profile=json.dumps(user_profile, ensure_ascii=False)
     )
-    urls = [image_urls] if isinstance(image_urls, str) else image_urls
     parser = JsonObjectStream()
     suggestion_count = 0
     seen_suggestions = set()
@@ -149,11 +148,11 @@ async def recognize_food_stream(image_urls: str | list[str], user_profile: dict)
 
     try:
         # 并发读取并转换图片；gather 按输入顺序返回，保持用户选图顺序。
-        prepared_urls = await asyncio.gather(*(prepare_image_data_url(url) for url in urls))
+        prepared_urls = await asyncio.gather(*(prepare_image_data_url(url) for url in image_urls))
         messages = [
             SystemMessage(content=prompt),
             HumanMessage(content=[
-                {"type": "text", "text": f"请综合这 {len(urls)} 张餐食照片，给出这一餐的名称和描述候选。"},
+                {"type": "text", "text": f"请综合这 {len(image_urls)} 张餐食照片，给出这一餐的名称和描述候选。"},
                 *[{"type": "image_url", "image_url": {"url": url}} for url in prepared_urls],
             ]),
         ]

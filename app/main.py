@@ -6,14 +6,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.concurrency import run_in_threadpool
 
-from app.core.database import engine, Base
+from app.core.database import engine
+from app.core.config import settings
+from app.core.redis import create_redis
 from app.core.exceptions import AppException
 from app.core.upload_middleware import UploadBodyLimitMiddleware
+from app.core.abuse_protection import AbuseProtection, AbuseProtectionMiddleware
 from app.schemas.base import ApiResponse
 from app.api.v1.user import router as user_router
 from app.api.v1.food import router as food_router
-from app.api.v1.chat import router as chat_router
 from app.api.v1.upload import router as upload_router
 from app.services.storage import get_storage
 
@@ -23,15 +26,21 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    get_storage().ensure_bucket()
-    yield
-    await engine.dispose()
+    redis = create_redis()
+    try:
+        await redis.ping()
+        app.state.redis = redis
+        app.state.abuse_protection = AbuseProtection(redis, settings.redis_key_prefix)
+        await run_in_threadpool(get_storage().ensure_bucket)
+        yield
+    finally:
+        await redis.aclose()
+        await engine.dispose()
 
 
 app = FastAPI(title="SmartDiet API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(UploadBodyLimitMiddleware)
+app.add_middleware(AbuseProtectionMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,6 +48,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Retry-After"],
 )
 
 
@@ -65,6 +75,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     return JSONResponse(
         status_code=exc.status_code,
         content={"code": exc.status_code, "message": message, "data": None},
+        headers=exc.headers,
     )
 
 
@@ -78,7 +89,6 @@ async def unexpected_exception_handler(request: Request, exc: Exception):
 
 app.include_router(user_router, prefix="/api/v1")
 app.include_router(food_router, prefix="/api/v1")
-app.include_router(chat_router, prefix="/api/v1")
 app.include_router(upload_router, prefix="/api/v1")
 
 
