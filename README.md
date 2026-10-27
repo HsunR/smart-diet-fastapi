@@ -2,7 +2,7 @@
 
 ## 项目简介
 
-SmartDiet 后端是一个基于 FastAPI 的异步 Web 服务，提供用户管理、饮食记录和食物识别等功能。使用 PostgreSQL 保存业务数据，保留 Redis 基础服务供后续扩展，支持 Docker 容器化部署。
+SmartDiet 后端是一个基于 FastAPI 的异步 Web 服务，提供用户管理、饮食记录和食物识别等功能。使用 PostgreSQL 保存业务数据，使用 FastAPI-Limiter + PyrateLimiter + Redis 管理接口限流，支持 Docker 容器化部署。
 
 用户上传的图片存储在 MinIO 对象存储中，而不是应用容器本地磁盘。对象存储使用私有桶。上传和查询接口向前端返回短时签名 URL；数据库只保存稳定对象引用，视觉模型通过后端读取并转换为 Base64 接收图片。
 
@@ -122,7 +122,7 @@ SmartDiet 后端是一个基于 FastAPI 的异步 Web 服务，提供用户管�
 
 4. **运行数据库迁移**
 
-   当前应用不依赖 Redis，本地 Python 运行无需启动 Redis。
+   默认启用限流，本地运行也需要可访问的 Redis，并配置 `REDIS_URL` 与 `REDIS_PASSWORD`。Compose 中 Redis 仅内网可访问；宿主机 Python 请使用独立本地 Redis，或通过受控方式连接开发 Redis。仅本地离线调试可设置 `RATE_LIMIT_ENABLED=false`，此时应用不连接 Redis。
    ```bash
    alembic upgrade head
    ```
@@ -298,11 +298,46 @@ docker compose up -d --build
 
 `POST /api/v1/upload/access` 接收 `{"imageUrls": ["图片引用或过期签名 URL"]}`，返回同顺序的新签名 URL（最多 6 张），需要 Bearer 登录及归属校验。识别仅接收当前用户已上传的图片。闲聊 API、会话服务、模型及本地旧草稿迁移已移除。
 
-## Redis 基础服务
+## 接口限流
 
-Compose 保留 Redis 服务及密码认证、AOF 持久化和健康检查，不发布宿主机端口。当前业务未使用 Redis，应用启动不连接或依赖 Redis。
+使用 **FastAPI-Limiter 0.2.0 + PyrateLimiter 4.5.1 + Redis**。FastAPI-Limiter 负责请求放行和超限回调，PyrateLimiter 的 `TokenBucket` / `StateBucket` / `RedisStateStore` 负责算法、Lua 原子更新及 TTL。项目仅配置策略、身份和 API 响应，不自行实现限流算法或 Lua 脚本。
 
-接口频率限制、账号尝试限制、图片数量配额和 AI 并发租约均已移除，待后续重新设计。图片上传的请求体大小、单张大小、张数、像素和格式校验仍然有效，登录鉴权及图片归属校验也保留。
+默认启用；应用启动连接 Redis 并校验连通性，退出时关闭连接池。Compose 等待 Redis 健康后启动应用。Redis 保留密码认证、AOF 持久化和健康检查，不发布宿主机端口。
+
+| 环境变量 | 默认值 | 规则 |
+| --- | --- | --- |
+| `RATE_LIMIT_ENABLED` | `true` | 总开关，关闭时不创建 Redis 连接 |
+| `RATE_LIMIT_PREFIX` | `smartdiet:ratelimit:v1` | 环境命名空间，不同环境应隔离 |
+| `RATE_LIMIT_IP_PER_MINUTE` | `300` | 所有 `/api/v1/` 请求按可信客户端 IP 共享 |
+| `RATE_LIMIT_USER_PER_MINUTE` | `120` | 全部已认证接口按用户 ID 共享 |
+| `RATE_LIMIT_LOGIN_PER_MINUTE` | `20` | 微信与网页登录按 IP 共享，包含失败及非法请求 |
+| `RATE_LIMIT_ACCOUNT_PER_MINUTE` | `10` | 网页登录按小写规范化账号共享，跨 IP 生效，统计全部尝试 |
+| `RATE_LIMIT_REGISTER_PER_HOUR` | `5` | 网页注册按 IP 计数，包含失败及非法请求 |
+| `RATE_LIMIT_UPLOAD_IMAGES_PER_MINUTE` | `30` | 单张与批量上传按用户共享，按照片张数原子扣减，最小配置 6 |
+| `RATE_LIMIT_AI_PER_MINUTE` | `6` | 普通与 SSE 识别按用户共享，每次请求扣 1 次 |
+
+以上数量表示**令牌补充速度**，桶容量等于配置数量。例如 AI 桶最多累积 6 个令牌，以每 10 秒 1 个令牌的速度恢复；这不是“任意滚动一分钟最多 6 次”的严格窗口。批量上传额度不足时整批拒绝，不部分扣减。请求准入后即扣减，后续校验或业务失败不返还，避免通过失败请求绕过限制；不同策略依次执行，后续策略拒绝不会返还前面已消耗的令牌。
+
+每个用户、IP、账号、策略使用独立 Redis 状态，身份通过 HMAC 摘要存储。所有实例须配置相同的前缀、JWT 密钥及阈值。修改环境变量后重启应用；阈值包含在状态键中，修改阈值会建立新桶，应协调多实例配置发布。空闲状态由框架 TTL 自动清理，不保留不断增长的 Python 用户桶缓存。
+
+IP 及登录/注册限流在 JSON/multipart 解析和数据库操作之前执行。用户额度在通过鉴权后扣减；图片额度在验证图片内容和写入 MinIO 前扣减；AI 额度在启动识别及发送 SSE 响应头前扣减。`/health`、文档和 CORS `OPTIONS` 不参与限流。IP 只取 ASGI 客户端地址，应用不直接信任 `X-Forwarded-For`；反向代理部署须在 Uvicorn 配置 `--proxy-headers --forwarded-allow-ips=<可信代理IP>`，并限制外部直接访问后端。
+
+超限返回 HTTP `429`、`Retry-After` 秒数和统一的 `{code, message, data}` 响应；前端普通请求、上传及 H5/小程序 SSE 均显示重试提示，不自动重放请求。CORS 允许浏览器读取 `Retry-After`。Redis 运行时不可用时，所有受保护 API 返回 `503`，不回退到进程内计数，不重试可能已经扣减的写操作；`/health` 仍作为存活检查响应。Redis 启动不可用会阻止应用启动。
+
+已发布的 FastAPI-Limiter 0.2.0 会扫描路由位置，不能直接处理 FastAPI 0.162 的 `_IncludedRouter`；适配层为限流调用提供固定路由视图，并显式按策略确定共享关系，避免路由顺序影响计数。请勿直接套用其主分支文档中尚未发布的中间件/跳过参数示例。
+
+本次提供频率控制，不包含 AI 活跃任务并发上限或持久化每日业务配额。图片上传的请求体大小、单张大小、张数、像素和格式校验、登录鉴权及图片归属校验继续生效。
+
+### 限流验证
+
+测试使用独立 Redis，按随机命名空间隔离和清理，仅删除本次测试的键，不执行 `FLUSHDB`。未设置 `TEST_REDIS_URL` 时跳过 Redis 集成用例，CI 使用 Redis 服务执行完整测试。
+
+```powershell
+$env:TEST_REDIS_URL = "redis://localhost:6379/15"
+python -m pytest -q
+```
+
+覆盖跨实例并发原子性、身份隔离、批量计数、状态过期、登录保护、可信 IP、普通/SSE 共享额度、故障关闭及开关行为。
 
 ## 依赖安全验证
 

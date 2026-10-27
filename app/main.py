@@ -11,6 +11,7 @@ from starlette.concurrency import run_in_threadpool
 from app.core.database import engine
 from app.core.exceptions import AppException
 from app.core.upload_middleware import UploadBodyLimitMiddleware
+from app.core.rate_limit import RateLimitMiddleware, init_rate_limits
 from app.schemas.base import ApiResponse
 from app.api.v1.user import router as user_router
 from app.api.v1.food import router as food_router
@@ -23,15 +24,23 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    app.state.rate_limits = None
     try:
+        app.state.rate_limits = await init_rate_limits()
         await run_in_threadpool(get_storage().ensure_bucket)
         yield
     finally:
-        await engine.dispose()
+        try:
+            if app.state.rate_limits is not None:
+                await app.state.rate_limits.close()
+        finally:
+            app.state.rate_limits = None
+            await engine.dispose()
 
 
 app = FastAPI(title="SmartDiet API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(UploadBodyLimitMiddleware)
+app.add_middleware(RateLimitMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,6 +48,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Retry-After"],
 )
 
 

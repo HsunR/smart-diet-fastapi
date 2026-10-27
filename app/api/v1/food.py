@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user
+from app.core.rate_limit import get_rate_limited_user, require_ai_rate_limit
 from app.core.exceptions import BadRequest
 from app.models.user import User
 from app.schemas.base import ApiResponse
@@ -20,38 +20,38 @@ router = APIRouter(prefix="/records", tags=["food_records"])
 
 
 @router.post("", response_model=ApiResponse[FoodRecordResponse], status_code=201)
-async def create_record(data: FoodRecordCreate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db, scope="function")):
+async def create_record(data: FoodRecordCreate, current_user: User = Depends(get_rate_limited_user), db: AsyncSession = Depends(get_db, scope="function")):
     record = await food_service.create_record(db, current_user.id, data)
     return ApiResponse.success((await record_responses(db, current_user.id, [record]))[0])
 
 
 @router.get("", response_model=ApiResponse[list[FoodRecordResponse]])
-async def get_records(date: date = Query(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db, scope="function")):
+async def get_records(date: date = Query(...), current_user: User = Depends(get_rate_limited_user), db: AsyncSession = Depends(get_db, scope="function")):
     records = await food_service.get_records_by_date(db, current_user.id, date)
     return ApiResponse.success(await record_responses(db, current_user.id, records))
 
 
 @router.get("/history", response_model=ApiResponse[list[FoodRecordResponse]])
-async def get_history(start: date = Query(...), end: date = Query(...), current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db, scope="function")):
+async def get_history(start: date = Query(...), end: date = Query(...), current_user: User = Depends(get_rate_limited_user), db: AsyncSession = Depends(get_db, scope="function")):
     records = await food_service.get_history(db, current_user.id, start, end)
     return ApiResponse.success(await record_responses(db, current_user.id, records))
 
 
 @router.delete("/{record_id}", status_code=204)
-async def delete_record(record_id: UUID, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db, scope="function")):
+async def delete_record(record_id: UUID, current_user: User = Depends(get_rate_limited_user), db: AsyncSession = Depends(get_db, scope="function")):
     await food_service.delete_record(db, current_user.id, record_id)
 
 
 @router.patch("/{record_id}", response_model=ApiResponse[FoodRecordResponse])
-async def update_record(record_id: UUID, data: FoodRecordUpdate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db, scope="function")):
+async def update_record(record_id: UUID, data: FoodRecordUpdate, current_user: User = Depends(get_rate_limited_user), db: AsyncSession = Depends(get_db, scope="function")):
     record = await food_service.update_record(db, current_user.id, record_id, data)
     return ApiResponse.success((await record_responses(db, current_user.id, [record]))[0])
 
 
-@router.post("/recognize", response_model=ApiResponse[FoodRecognitionResponse])
+@router.post("/recognize", response_model=ApiResponse[FoodRecognitionResponse], dependencies=[Depends(require_ai_rate_limit)])
 async def recognize_food(
     req: FoodRecognitionRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_rate_limited_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
     image_url = (await owned_images(db, current_user.id, [req.image_url]))[0]
@@ -76,10 +76,10 @@ async def recognize_food(
     ))
 
 
-@router.post("/recognize/stream")
+@router.post("/recognize/stream", dependencies=[Depends(require_ai_rate_limit)])
 async def recognize_food_stream_endpoint(
     req: FoodRecognitionStreamRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_rate_limited_user),
     db: AsyncSession = Depends(get_db, scope="function"),
 ):
     user_profile = {"age": current_user.age, "weight": float(current_user.weight)}
@@ -101,5 +101,5 @@ async def recognize_food_stream_endpoint(
 
 
 @router.get("/report/weekly", response_model=ApiResponse[WeeklyReportResponse])
-async def weekly_report(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db, scope="function")):
+async def weekly_report(current_user: User = Depends(get_rate_limited_user), db: AsyncSession = Depends(get_db, scope="function")):
     return ApiResponse.success(await food_service.get_weekly_report(db, current_user.id))

@@ -28,5 +28,15 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     redis_password: SecretStr = SecretStr("")
 
+    rate_limit_enabled: bool = True
+    rate_limit_prefix: str = Field(default="smartdiet:ratelimit:v1", min_length=1, pattern=r"^[A-Za-z0-9:_-]+$")
+    rate_limit_ip_per_minute: int = Field(default=300, ge=1)
+    rate_limit_user_per_minute: int = Field(default=120, ge=1)
+    rate_limit_login_per_minute: int = Field(default=20, ge=1)
+    rate_limit_account_per_minute: int = Field(default=10, ge=1)
+    rate_limit_register_per_hour: int = Field(default=5, ge=1)
+    rate_limit_upload_images_per_minute: int = Field(default=30, ge=6)
+    rate_limit_ai_per_minute: int = Field(default=6, ge=1)
+
 
 settings = Settings()

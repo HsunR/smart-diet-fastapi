@@ -25,6 +25,15 @@ services:
       DATABASE_URL: postgresql+asyncpg://smartdiet:smartdiet@db:5432/smartdiet
       REDIS_URL: redis://redis:6379/0
       REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_PREFIX: ${RATE_LIMIT_PREFIX:-smartdiet:ratelimit:v1}
+      RATE_LIMIT_IP_PER_MINUTE: ${RATE_LIMIT_IP_PER_MINUTE:-300}
+      RATE_LIMIT_USER_PER_MINUTE: ${RATE_LIMIT_USER_PER_MINUTE:-120}
+      RATE_LIMIT_LOGIN_PER_MINUTE: ${RATE_LIMIT_LOGIN_PER_MINUTE:-20}
+      RATE_LIMIT_ACCOUNT_PER_MINUTE: ${RATE_LIMIT_ACCOUNT_PER_MINUTE:-10}
+      RATE_LIMIT_REGISTER_PER_HOUR: ${RATE_LIMIT_REGISTER_PER_HOUR:-5}
+      RATE_LIMIT_UPLOAD_IMAGES_PER_MINUTE: ${RATE_LIMIT_UPLOAD_IMAGES_PER_MINUTE:-30}
+      RATE_LIMIT_AI_PER_MINUTE: ${RATE_LIMIT_AI_PER_MINUTE:-6}
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -36,6 +45,8 @@ services:
         condition: service_started
       minio:
         condition: service_started
+      redis:
+        condition: service_healthy
     volumes:
       - .:/app
 
