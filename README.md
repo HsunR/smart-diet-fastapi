@@ -260,7 +260,7 @@ alembic history --verbose
 
 ## 测试服务器自动部署（GitHub Actions）
 
-后端仓库的 `main` 收到 push（含 PR 合并）后，`.github/workflows/deploy-test.yml` 通过 SSH 登录固定测试服务器，在服务器构建镜像并更新 Docker Compose 服务。部署命令全部写在 workflow 中，可以从 Actions 页面手动重新触发。现有测试、依赖审计工作流继续独立运行；此简化部署流程不等待它们完成。
+后端仓库的 `main` 收到 push（含 PR 合并）后，`.github/workflows/deploy-test.yml` 通过 SSH 登录固定测试服务器，在服务器构建镜像并更新 Docker Compose 服务。部署命令全部写在 workflow 中，可以从 Actions 页面手动重新触发。仓库仅保留测试环境自动部署工作流，测试和依赖审计可按下文说明手动运行。
 
 ### 1. 首次准备服务器
 
@@ -417,7 +417,7 @@ IP 及登录/注册限流在 JSON/multipart 解析和数据库操作之前执行
 
 ### 限流验证
 
-测试使用独立 Redis，按随机命名空间隔离和清理，仅删除本次测试的键，不执行 `FLUSHDB`。未设置 `TEST_REDIS_URL` 时跳过 Redis 集成用例，CI 使用 Redis 服务执行完整测试。
+测试使用独立 Redis，按随机命名空间隔离和清理，仅删除本次测试的键，不执行 `FLUSHDB`。未设置 `TEST_REDIS_URL` 时跳过 Redis 集成用例；手动执行完整测试前需配置可访问的测试 Redis。
 
 ```powershell
 $env:TEST_REDIS_URL = "redis://localhost:6379/15"
@@ -430,4 +430,4 @@ python -m pytest -q
 
 `requirements.in` 维护直接依赖；`requirements.txt` 是针对 Python 3.12 生成的跨平台完整锁定文件，含安装包哈希。继续使用 `python -m pip install -r requirements.txt` 即可安装锁定版本。JWT 改用 PyJWT，移除了未使用的 `langchain`、`langchain-community` 及其额外依赖。
 
-更新版本后使用 `uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes --output-file requirements.txt` 重新生成锁定文件，再执行 `python -m pip check`、`python -m pip_audit --strict`（审计工具另行安装 `pip-audit==2.10.1`）。仓库 push／PR 检查会运行依赖审计。
+更新版本后使用 `uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes --output-file requirements.txt` 重新生成锁定文件，再手动执行 `python -m pip check`、`python -m pip_audit --strict`（审计工具另行安装 `pip-audit==2.10.1`）。
