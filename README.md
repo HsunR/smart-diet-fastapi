@@ -258,6 +258,93 @@ alembic history --verbose
    DEBUG=True
    ```
 
+## 测试服务器自动部署（GitHub Actions）
+
+后端仓库的 `main` 收到 push（含 PR 合并）后，`.github/workflows/deploy-test.yml` 通过 SSH 登录固定测试服务器，在服务器构建镜像并更新 Docker Compose 服务。部署命令全部写在 workflow 中，可以从 Actions 页面手动重新触发。现有测试、依赖审计工作流继续独立运行；此简化部署流程不等待它们完成。
+
+### 1. 首次准备服务器
+
+服务器需安装 Git、Bash、`flock`（通常由 util-linux 提供）、Docker 和 **Docker Compose 2.20+**，并能访问 GitHub、容器镜像源和 Python 包源。部署用户应有目录写入权限及直接运行 Docker 的权限，非交互 SSH 会话也需能找到这些命令。
+
+先以部署用户将后端仓库克隆到专用目录，例如 `/opt/smartdiet/backend`（该目录应由部署用户持有）：
+
+```bash
+git clone git@github.com:HsunR/smart-diet-fastapi.git /opt/smartdiet/backend
+cd /opt/smartdiet/backend
+cp .env.test.example .env
+chmod 600 .env
+```
+
+上例使用 SSH 克隆，需给服务器配置只读 GitHub Deploy Key，并通过可信渠道核实、保存 GitHub 的 SSH 主机密钥；公开仓库也可改用 HTTPS 地址克隆。确认以部署用户执行 `git fetch origin main` 不需要交互输入密码或确认主机。该密钥与下文 Actions 登录服务器的密钥用途不同。
+
+编辑服务器 `.env`：
+
+- 分别设置 `POSTGRES_PASSWORD`、`REDIS_PASSWORD`、`JWT_SECRET`、`MINIO_ROOT_PASSWORD`，可运行 `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` 分别生成。数据库密码须使用 URL 安全字符，因为它会拼入数据库连接串。
+- 设置 `MINIO_PUBLIC_URL` 为测试客户端可访问的 S3 API 根地址，例如 `http://测试服务器地址:9002`，不含路径；使用域名反向代理时填写对应地址。
+- 按需填写模型接口和微信凭据，未配置微信时仍可使用网页账号登录。
+- 可调整 `TEST_APP_PORT`、`TEST_MINIO_PORT` 和 `TEST_MINIO_CONSOLE_PORT`。
+
+测试配置独立使用 `docker-compose.test.yml`，不与开发 Compose 合并。应用无源码挂载、无热重载，启动时先执行数据库迁移；PostgreSQL、Redis 不发布宿主机端口，MinIO 控制台仅绑定 `127.0.0.1`。按需在服务器防火墙开放 API 和图片访问端口。
+
+先手动验证一次：
+
+```bash
+docker compose --env-file .env -f docker-compose.test.yml config --quiet
+docker compose --env-file .env -f docker-compose.test.yml build app
+docker compose --env-file .env -f docker-compose.test.yml up -d --no-build --wait --wait-timeout 120
+curl --fail http://127.0.0.1:8000/health
+```
+
+若调整了 `TEST_APP_PORT`，对应修改 curl 地址。Compose 默认项目名固定为 `smartdiet-test`；数据保存在该项目的命名卷中。已有测试实例需先核对原项目名、卷名、数据库密码与迁移状态，再设置 `.env` 的 `COMPOSE_PROJECT_NAME` 沿用原项目。不要在现有实例旁启动另一套使用相同端口的项目。修改 `.env` 中的数据库密码不会修改已有数据库用户的密码。
+
+### 2. 配置 Actions 登录服务器
+
+为 Actions 准备专用、无口令的 SSH 私钥，将对应公钥加入部署用户的 `~/.ssh/authorized_keys`。在 GitHub 后端仓库的 **Settings → Secrets and variables → Actions** 添加：
+
+| 类型 | 名称 | 内容 |
+| --- | --- | --- |
+| Secret | `TEST_SSH_PRIVATE_KEY` | 完整 SSH 私钥，包含首尾标记与换行 |
+| Secret | `TEST_SSH_KNOWN_HOSTS` | 核实过的服务器 `known_hosts` 记录 |
+| Variable | `TEST_SERVER_HOST` | 服务器 IP 或域名，不含用户名、端口或 URL 协议 |
+| Variable | `TEST_SERVER_PORT` | SSH 端口，可省略，默认 `22` |
+| Variable | `TEST_SERVER_USER` | SSH 部署用户，例如 `deploy` |
+| Variable | `TEST_DEPLOY_PATH` | 仓库根目录的绝对路径，例如 `/opt/smartdiet/backend` |
+
+`TEST_SSH_KNOWN_HOSTS` 可先通过 `ssh-keyscan -p 22 测试服务器地址` 收集，但必须与服务器控制台或管理员提供的主机指纹核对后再保存；非标准端口的记录使用 `[主机]:端口`。workflow 强制校验主机身份，不自动接受未知主机。业务 `.env` 留在服务器，不上传 GitHub。
+
+### 3. 触发与部署行为
+
+将本次部署配置提交并推送到 `main` 后，在 Actions 中查看 **Deploy backend to test server**。也可选择该 workflow，点击 **Run workflow** 并选择 `main`；其他分支不会执行部署。
+
+workflow 会：
+
+1. 校验配置、建立 SSH 连接，并在服务器取得部署锁。
+2. 检查服务器工作区；存在未提交或未跟踪的非忽略文件时停止，保留本地修改。
+3. 获取 `origin/main`，仅部署与当前远程主分支一致的本次提交 SHA，跳过过时任务。
+4. 切换到该 SHA（detached HEAD），校验 `.env` 和 Compose 配置，构建以 SHA 为标签的应用镜像。
+5. 构建成功后更新容器，最多等待 120 秒。应用健康检查从容器内请求 `/health`，同时校验 HTTP 成功、`code=0` 和 `data.status=ok`；Compose 也等待数据库、Redis 健康。
+6. 成功后将 SHA 写入 `.git/smartdiet-test-deployed-sha`；失败时返回非零状态，并输出容器状态和近期日志。
+
+同一时间只运行一个部署，不自动取消正在执行的任务；服务器文件锁也会串行处理尚未退出的 SSH 部署进程。单实例更新有短暂中断。构建失败时不更新现有容器；容器更新、迁移或健康检查失败时不会自动回滚。
+
+`/health` 是应用存活检查，首次部署后还需验证注册/登录、数据查询和图片上传。数据库迁移成功后的代码回退不等于数据库回退。
+
+### 4. 查看状态与恢复
+
+以部署用户在仓库目录执行（自动部署后，先加载上次成功版本，避免 Compose 默认使用 `local` 镜像）：
+
+```bash
+cd /opt/smartdiet/backend
+export DEPLOY_SHA="$(cat .git/smartdiet-test-deployed-sha)"
+docker compose --env-file .env -f docker-compose.test.yml ps --all
+docker compose --env-file .env -f docker-compose.test.yml logs --tail 100 app
+cat .git/smartdiet-test-deployed-sha
+```
+
+该记录仅表示最近一次成功部署；失败任务可能已经更新容器或迁移了数据库。首次部署失败时尚无该文件，可从 Actions 日志取本次 SHA 设置 `DEPLOY_SHA`。修复配置或服务问题后，重新运行最新 `main` 的 workflow。排查迁移失败需先核对数据库状态；需要回退时，通过代码 revert 形成新的 `main` 提交，并确认其兼容当前数据库结构。
+
+日常更新保留数据卷，不执行 `docker compose down --volumes`。服务器工作区供自动部署使用，代码修改应在开发机提交；服务器仅修改被 Git 忽略的 `.env`。
+
 ## 生产部署
 
 1. **修改默认密码**

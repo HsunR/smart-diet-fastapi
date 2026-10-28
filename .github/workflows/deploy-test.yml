@@ -1,0 +1,114 @@
+name: Deploy backend to test server
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-test-deployment-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TEST_SERVER_HOST: ${{ vars.TEST_SERVER_HOST }}
+      TEST_SERVER_PORT: ${{ vars.TEST_SERVER_PORT || '22' }}
+      TEST_SERVER_USER: ${{ vars.TEST_SERVER_USER }}
+      TEST_DEPLOY_PATH: ${{ vars.TEST_DEPLOY_PATH }}
+      TEST_SSH_PRIVATE_KEY: ${{ secrets.TEST_SSH_PRIVATE_KEY }}
+      TEST_SSH_KNOWN_HOSTS: ${{ secrets.TEST_SSH_KNOWN_HOSTS }}
+      DEPLOY_SHA: ${{ github.sha }}
+    steps:
+      - name: Update and start backend over SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          for name in TEST_SERVER_HOST TEST_SERVER_PORT TEST_SERVER_USER TEST_DEPLOY_PATH TEST_SSH_PRIVATE_KEY TEST_SSH_KNOWN_HOSTS; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Missing Actions variable or secret: $name"
+              exit 1
+            fi
+          done
+          [[ "$TEST_SERVER_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.:-]*$ ]]
+          [[ "$TEST_SERVER_USER" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]
+          [[ "$TEST_SERVER_PORT" =~ ^[0-9]{1,5}$ ]]
+          (( 10#$TEST_SERVER_PORT >= 1 && 10#$TEST_SERVER_PORT <= 65535 ))
+          [[ "$TEST_DEPLOY_PATH" == /* && "$TEST_DEPLOY_PATH" != / && "$TEST_DEPLOY_PATH" != *$'\n'* && "$TEST_DEPLOY_PATH" != *$'\r'* ]]
+          [[ "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          ssh_dir="$(mktemp -d "$RUNNER_TEMP/smartdiet-ssh.XXXXXX")"
+          trap 'rm -rf -- "$ssh_dir"' EXIT
+          printf '%s\n' "$TEST_SSH_PRIVATE_KEY" | tr -d '\r' > "$ssh_dir/key"
+          printf '%s\n' "$TEST_SSH_KNOWN_HOSTS" | tr -d '\r' > "$ssh_dir/known_hosts"
+          chmod 600 "$ssh_dir/key" "$ssh_dir/known_hosts"
+          ssh-keygen -y -P '' -f "$ssh_dir/key" > /dev/null
+
+          # Quote arguments before passing them through the remote login shell.
+          printf -v remote_command 'bash -s -- %q %q' "$TEST_DEPLOY_PATH" "$DEPLOY_SHA"
+          ssh -T -p "$TEST_SERVER_PORT" -i "$ssh_dir/key" \
+            -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$ssh_dir/known_hosts" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            "$TEST_SERVER_USER@$TEST_SERVER_HOST" "$remote_command" <<'REMOTE'
+          set -Eeuo pipefail
+          deploy_path="$1"
+          export DEPLOY_SHA="$2"
+          export GIT_TERMINAL_PROMPT=0
+
+          for command in git docker flock; do
+            command -v "$command" > /dev/null
+          done
+          cd -- "$deploy_path"
+          [[ "$(git rev-parse --show-toplevel)" -ef . ]]
+
+          # Also serialize remote sessions if a runner is canceled or disconnected.
+          exec 9> "$(git rev-parse --git-path smartdiet-test-deploy.lock)"
+          flock -w 600 9
+
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo 'Deployment stopped: the server checkout has local changes.' >&2
+            exit 1
+          fi
+          git -c core.sshCommand='ssh -o BatchMode=yes -o StrictHostKeyChecking=yes' \
+            fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if [[ "$DEPLOY_SHA" != "$(git rev-parse refs/remotes/origin/main)" ]]; then
+            echo "Skipping outdated deployment $DEPLOY_SHA; main has a newer commit."
+            exit 0
+          fi
+          git -c advice.detachedHead=false checkout --detach "$DEPLOY_SHA"
+
+          if [[ ! -f .env || ! -f docker-compose.test.yml ]]; then
+            echo 'Missing .env or docker-compose.test.yml; complete the server setup in README.md.' >&2
+            exit 1
+          fi
+          docker compose version > /dev/null
+          docker info > /dev/null
+          compose=(docker compose --env-file .env -f docker-compose.test.yml)
+          "${compose[@]}" config --quiet
+
+          on_error() {
+            status=$?
+            trap - ERR
+            echo "Deployment failed for $DEPLOY_SHA (exit $status)." >&2
+            "${compose[@]}" ps --all || true
+            "${compose[@]}" logs --no-color --tail 80 app db redis minio || true
+            exit "$status"
+          }
+          trap on_error ERR
+
+          # Build first so an unsuccessful build leaves the running containers alone.
+          "${compose[@]}" build app
+          "${compose[@]}" up -d --no-build --wait --wait-timeout 120
+          printf '%s\n' "$DEPLOY_SHA" > "$(git rev-parse --git-path smartdiet-test-deployed-sha)"
+          "${compose[@]}" ps
+          echo "Successfully deployed $DEPLOY_SHA to the test server."
+          REMOTE
