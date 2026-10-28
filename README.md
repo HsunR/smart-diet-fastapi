@@ -283,6 +283,7 @@ chmod 600 .env
 - 设置 `MINIO_PUBLIC_URL` 为测试客户端可访问的 S3 API 根地址，例如 `http://测试服务器地址:9002`，不含路径；使用域名反向代理时填写对应地址。
 - 按需填写模型接口和微信凭据，未配置微信时仍可使用网页账号登录。
 - 可调整 `TEST_APP_PORT`、`TEST_MINIO_PORT` 和 `TEST_MINIO_CONSOLE_PORT`。
+- 测试镜像构建默认使用清华 PyPI 镜像，下载超时 60 秒、连接重试 5 次；可通过 `.env` 的 `PIP_INDEX_URL`、`PIP_TIMEOUT`、`PIP_RETRIES` 调整。使用官方源时设置 `PIP_INDEX_URL=https://pypi.org/simple`。这些变量通过 Compose build args 传入 Docker 构建，不是应用运行时变量；依赖版本和 SHA256 哈希仍以 `requirements.txt` 为准。
 
 测试配置独立使用 `docker-compose.test.yml`，不与开发 Compose 合并。应用无源码挂载、无热重载，启动时先执行数据库迁移；PostgreSQL、Redis 不发布宿主机端口，MinIO 控制台仅绑定 `127.0.0.1`。按需在服务器防火墙开放 API 和图片访问端口。
 
@@ -342,6 +343,8 @@ cat .git/smartdiet-test-deployed-sha
 ```
 
 该记录仅表示最近一次成功部署；失败任务可能已经更新容器或迁移了数据库。首次部署失败时尚无该文件，可从 Actions 日志取本次 SHA 设置 `DEPLOY_SHA`。修复配置或服务问题后，重新运行最新 `main` 的 workflow。排查迁移失败需先核对数据库状态；需要回退时，通过代码 revert 形成新的 `main` 提交，并确认其兼容当前数据库结构。
+
+构建时报 `No matching distribution found` 时，先核对包的版本、Python 和系统架构，再检查服务器到所选索引的网络连通性及该索引是否包含锁定版本。可切换 `PIP_INDEX_URL` 后重新构建；镜像同步延迟也可能暂时缺少新版本。pip 的升级提示本身不是安装失败原因，不要直接删除版本约束或哈希校验。只修改 `.env` 中的下载源即可，不需要在服务器修改 Dockerfile 或 Compose 文件。
 
 日常更新保留数据卷，不执行 `docker compose down --volumes`。服务器工作区供自动部署使用，代码修改应在开发机提交；服务器仅修改被 Git 忽略的 `.env`。
 
