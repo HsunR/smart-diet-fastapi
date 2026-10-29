@@ -15,7 +15,7 @@
 2. 安全组与防火墙开放 TCP `80/443`；UDP `443` 用于 HTTP/3，可选。保留 SSH 管理入口。API `8000`、MinIO API `9002`、控制台 `9001` 均仅绑定 `127.0.0.1`，不需要对公网开放；PostgreSQL、Redis 不发布端口。
 3. 检查现有 `80/443` 监听者。如果已运行宿主机 Caddy、Nginx 或其他 HTTPS 服务，先记录其配置与恢复方式；在配置校验和镜像构建完成后，再于切换窗口停止占用端口的旧入口。新 Caddy 与旧入口不能同时占用这些端口。若旧入口同时承载其他站点，应先将其路由纳入切换方案。
 4. 新服务器复制 `.env.test.example` 为 `.env` 并填写密钥；已有服务器将新增变量合并到原 `.env`，不要覆盖已有密钥。设置 `API_DOMAIN`、`IMAGES_DOMAIN`、真实的 `ACME_EMAIL`。`MINIO_PUBLIC_URL` 由 Compose 自动设为 `https://<IMAGES_DOMAIN>`，原 `.env` 中同名旧值不再用于此服务器配置。
-5. 默认代理子网为 `172.30.88.0/24`、Caddy IP 为 `172.30.88.2`。若与服务器已有 Docker、局域网或 VPN 网段冲突，同时调整 `CADDY_PROXY_SUBNET` 和 `CADDY_PROXY_IP`，确保 IP 在子网内且不是网关或广播地址。
+5. 默认可信代理子网为 `172.30.88.0/24`，仅 Caddy 和应用加入；若与服务器已有 Docker、局域网或 VPN 网段冲突，调整 `CADDY_PROXY_SUBNET`。容器 IP 由 Docker 动态分配，不再设置固定 IP。旧 `.env` 中的 `CADDY_PROXY_IP` 可以删除，保留也不会生效。
 6. 旧数据库数据由你手动清理。此改动不执行清库、删卷或旧图片地址回填。当前迁移基线要求空库或已兼容的数据库；切换图片域名后，旧域名的数据库图片引用不会自动转换。MinIO 旧对象是否删除也由你决定。
 
 在后端目录执行（先完成上述配置和数据准备）：
@@ -30,13 +30,15 @@ docker compose --env-file .env -f docker-compose.test.yml up -d --no-build --wai
 docker compose --env-file .env -f docker-compose.test.yml exec -T app python scripts/check_deployment.py --https
 ```
 
-两项部署前校验不启动依赖，也不执行迁移。`caddy-validate` 使用无网络的独立工具容器，不占用运行中 Caddy 的固定 IP。`up` 会启动应用并执行原有的 `alembic upgrade head`。
+两项部署前校验不启动依赖，也不执行迁移。`caddy-validate` 使用无网络的独立工具容器，不加入运行中的服务网络。`up` 会启动应用并执行原有的 `alembic upgrade head`。
 
 HTTPS 检查默认等待最多 180 秒，为首次证书申请预留时间；校验证书链和主机名、API `/health` 的业务响应、MinIO `/minio/health/live`，以及两个域名的 HTTP 跳转。检查使用公网域名，不通过容器服务名访问；服务器必须能访问这两个域名的公网入口。证书签发失败时查看 Caddy 日志，检查 DNS、80/443 可达性、CAA 限制及服务器访问 ACME 服务的网络。
 
 ## 代理与访问限制
 
-Caddy 位于独立 `proxy` 网络，应用与 MinIO 同时加入此网络及原服务网络，数据库和 Redis 只留在原服务网络。Uvicorn 开启代理头解析，且只信任 `CADDY_PROXY_IP`。Caddy 作为公网第一层入口默认丢弃外部提交的伪造 `X-Forwarded-For`，生成真实客户端地址，从而支持现有 IP 限流。
+Caddy 和应用加入独立的 `proxy` 网络；Caddy 与 MinIO 通过另一个 `storage_proxy` 网络通信，MinIO 不加入可信代理网络。应用、MinIO、数据库和 Redis 保留原服务网络连接。Uvicorn 开启代理头解析，且仅信任 `CADDY_PROXY_SUBNET`，不信任来自原服务网络或公网的代理头。Caddy 作为公网第一层入口默认丢弃外部提交的伪造 `X-Forwarded-For`，生成真实客户端地址，从而支持现有 IP 限流。
+
+所有容器使用动态地址，避免先启动的 MinIO 等服务占用 Caddy 的固定 IP 而导致 `Address already in use`。从旧配置升级时直接使用正常部署流程，Compose 会更新 Caddy、应用和 MinIO 的网络连接；不需要删除网络或数据卷。
 
 如果以后在 Caddy 前增加 CDN、负载均衡或其他反向代理，需要按其可信出口地址另外配置 Caddy 的可信代理；当前配置不直接信任任意来源的转发头。
 

@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 import pytest
+import yaml
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
@@ -32,16 +33,31 @@ def test_require_distinct_https_roots():
             deployment_urls({"API_DOMAIN": "api.example.com", "MINIO_PUBLIC_URL": url})
 
 
-@pytest.mark.parametrize("peer,expected", [("172.30.88.2", "198.51.100.7"), ("172.30.88.3", "172.30.88.3")])
-async def test_uvicorn_trusts_only_caddy(peer, expected):
+@pytest.mark.parametrize("peer,trusted", [("172.30.88.2", True), ("172.30.88.200", True), ("172.19.0.3", False), ("198.51.100.8", False)])
+async def test_uvicorn_trusts_only_proxy_network(peer, trusted):
     async def echo(scope, receive, send):
         request = Request(scope)
         await JSONResponse({"ip": request.client.host, "scheme": request.url.scheme})(scope, receive, send)
 
-    app = ProxyHeadersMiddleware(echo, trusted_hosts=["172.30.88.2"])
+    app = ProxyHeadersMiddleware(echo, trusted_hosts=["172.30.88.0/24"])
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app, client=(peer, 1234)), base_url="http://test") as client:
         response = await client.get("/", headers={"X-Forwarded-For": "198.51.100.7", "X-Forwarded-Proto": "https"})
-    assert response.json() == {"ip": expected, "scheme": "https" if peer == "172.30.88.2" else "http"}
+    assert response.json() == {"ip": "198.51.100.7" if trusted else peer, "scheme": "https" if trusted else "http"}
+
+
+def test_compose_isolates_trusted_proxy_network_and_uses_dynamic_ips():
+    path = Path(__file__).resolve().parents[1] / "docker-compose.test.yml"
+    config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    services = config["services"]
+    proxy_members = {name for name, service in services.items() if "proxy" in service.get("networks", [])}
+    storage_members = {name for name, service in services.items() if "storage_proxy" in service.get("networks", [])}
+    assert proxy_members == {"caddy", "app"}
+    assert storage_members == {"caddy", "minio"}
+    assert services["app"]["environment"]["FORWARDED_ALLOW_IPS"] == config["networks"]["proxy"]["ipam"]["config"][0]["subnet"]
+    for service in services.values():
+        networks = service.get("networks", {})
+        if isinstance(networks, dict):
+            assert all(not settings or "ipv4_address" not in settings for settings in networks.values())
 
 
 @pytest.fixture(scope="module")

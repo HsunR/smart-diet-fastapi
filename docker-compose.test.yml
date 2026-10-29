@@ -17,8 +17,8 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     networks:
-      proxy:
-        ipv4_address: ${CADDY_PROXY_IP:-172.30.88.2}
+      - proxy
+      - storage_proxy
     depends_on:
       app:
         condition: service_healthy
@@ -32,7 +32,7 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # A separate network-free tool avoids taking the live Caddy's fixed IP.
+  # Validate without joining or changing any running service networks.
   caddy-validate:
     image: caddy:2.11.7-alpine
     profiles: [tools]
@@ -75,7 +75,8 @@ services:
     ports:
       - '127.0.0.1:${TEST_APP_PORT:-8000}:8000'
     environment:
-      FORWARDED_ALLOW_IPS: ${CADDY_PROXY_IP:-172.30.88.2}
+      # Only Caddy and the app join this controlled network; use dynamic IPs.
+      FORWARDED_ALLOW_IPS: ${CADDY_PROXY_SUBNET:-172.30.88.0/24}
       API_DOMAIN: ${API_DOMAIN:?Set API_DOMAIN in .env}
       WECHAT_APPID: ${WECHAT_APPID:-}
       WECHAT_SECRET: ${WECHAT_SECRET:-}
@@ -160,10 +161,11 @@ services:
       - minio_data:/data
     networks:
       - default
-      - proxy
+      - storage_proxy
     restart: unless-stopped
 
 networks:
+  storage_proxy:
   proxy:
     ipam:
       config:
