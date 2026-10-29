@@ -2,6 +2,49 @@
 name: ${COMPOSE_PROJECT_NAME:-smartdiet-test}
 
 services:
+  caddy:
+    image: caddy:2.11.7-alpine
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?Set API_DOMAIN in .env}
+      IMAGES_DOMAIN: ${IMAGES_DOMAIN:?Set IMAGES_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./caddy:/etc/caddy:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      proxy:
+        ipv4_address: ${CADDY_PROXY_IP:-172.30.88.2}
+    depends_on:
+      app:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    healthcheck:
+      test: [CMD-SHELL, 'wget -q -O /dev/null http://127.0.0.1:2019/config/']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  # A separate network-free tool avoids taking the live Caddy's fixed IP.
+  caddy-validate:
+    image: caddy:2.11.7-alpine
+    profiles: [tools]
+    network_mode: none
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?Set API_DOMAIN in .env}
+      IMAGES_DOMAIN: ${IMAGES_DOMAIN:?Set IMAGES_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env}
+    volumes:
+      - ./caddy:/etc/caddy:ro
+    command: [caddy, validate, --config, /etc/caddy/Caddyfile, --adapter, caddyfile]
+
   db:
     image: postgres:16-alpine
     environment:
@@ -28,10 +71,12 @@ services:
     command:
       - sh
       - -c
-      - alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000
+      - alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips "$$FORWARDED_ALLOW_IPS"
     ports:
-      - '${TEST_APP_PORT:-8000}:8000'
+      - '127.0.0.1:${TEST_APP_PORT:-8000}:8000'
     environment:
+      FORWARDED_ALLOW_IPS: ${CADDY_PROXY_IP:-172.30.88.2}
+      API_DOMAIN: ${API_DOMAIN:?Set API_DOMAIN in .env}
       WECHAT_APPID: ${WECHAT_APPID:-}
       WECHAT_SECRET: ${WECHAT_SECRET:-}
       ALLOW_MOCK_LOGIN: ${ALLOW_MOCK_LOGIN:-false}
@@ -57,9 +102,12 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
       MINIO_BUCKET: ${MINIO_BUCKET:-smartdiet}
       MINIO_SECURE: 'false'
-      MINIO_PUBLIC_URL: "${MINIO_PUBLIC_URL:-http://47.120.74.124:9002}"
+      MINIO_PUBLIC_URL: https://${IMAGES_DOMAIN:?Set IMAGES_DOMAIN in .env}
       MINIO_REGION: ${MINIO_REGION:-us-east-1}
       IMAGE_URL_EXPIRE_SECONDS: ${IMAGE_URL_EXPIRE_SECONDS:-900}
+    networks:
+      - default
+      - proxy
     depends_on:
       db:
         condition: service_healthy
@@ -106,13 +154,24 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
     ports:
-      - '${TEST_MINIO_PORT:-9002}:9000'
+      - '127.0.0.1:${TEST_MINIO_PORT:-9002}:9000'
       - '127.0.0.1:${TEST_MINIO_CONSOLE_PORT:-9001}:9001'
     volumes:
       - minio_data:/data
+    networks:
+      - default
+      - proxy
     restart: unless-stopped
+
+networks:
+  proxy:
+    ipam:
+      config:
+        - subnet: ${CADDY_PROXY_SUBNET:-172.30.88.0/24}
 
 volumes:
   pgdata:
   minio_data:
   redis_data:
+  caddy_data:
+  caddy_config:

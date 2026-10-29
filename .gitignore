@@ -9,3 +9,10 @@ venv/
 # 本地运行密钥与上传缓存
 .env
 app/uploads/
+
+# Optional server-local TLS snippets and private keys.
+caddy/tls/**
+!caddy/tls/api/
+!caddy/tls/images/
+!caddy/tls/api/.gitkeep
+!caddy/tls/images/.gitkeep

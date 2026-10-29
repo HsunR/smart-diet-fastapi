@@ -1,0 +1,34 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$API_DOMAIN} {
+	# Optional local snippets can supply an existing certificate with `tls`.
+	import /etc/caddy/tls/api/*.caddy
+
+	@single_upload {
+		method POST
+		path /api/v1/upload /api/v1/upload/
+	}
+	request_body @single_upload {
+		max_size 11534336
+	}
+	@batch_upload {
+		method POST
+		path /api/v1/upload/images /api/v1/upload/images/
+	}
+	request_body @batch_upload {
+		max_size 63963136
+	}
+
+	reverse_proxy app:8000 {
+		# Send SSE events immediately, including small first chunks.
+		flush_interval -1
+	}
+}
+
+{$IMAGES_DOMAIN} {
+	import /etc/caddy/tls/images/*.caddy
+	# S3 signatures cover Host, path and query: do not rewrite them.
+	reverse_proxy minio:9000
+}

@@ -86,8 +86,8 @@ jobs:
           fi
           git -c advice.detachedHead=false checkout --detach "$DEPLOY_SHA"
 
-          if [[ ! -f .env || ! -f docker-compose.test.yml ]]; then
-            echo 'Missing .env or docker-compose.test.yml; complete the server setup in README.md.' >&2
+          if [[ ! -f .env || ! -f docker-compose.test.yml || ! -f caddy/Caddyfile ]]; then
+            echo 'Missing .env, docker-compose.test.yml or caddy/Caddyfile; complete the server setup in README.md.' >&2
             exit 1
           fi
           docker compose version > /dev/null
@@ -100,14 +100,20 @@ jobs:
             trap - ERR
             echo "Deployment failed for $DEPLOY_SHA (exit $status)." >&2
             "${compose[@]}" ps --all || true
-            "${compose[@]}" logs --no-color --tail 80 app db redis minio || true
+            "${compose[@]}" logs --no-color --tail 80 caddy app db redis minio || true
             exit "$status"
           }
           trap on_error ERR
 
           # Build first so an unsuccessful build leaves the running containers alone.
           "${compose[@]}" build app
+          # These one-off checks do not start dependencies or run migrations.
+          "${compose[@]}" run --rm --no-deps app python scripts/check_deployment.py
+          "${compose[@]}" run --rm --no-deps caddy-validate
           "${compose[@]}" up -d --no-build --wait --wait-timeout 120
+          # Directory mounting makes Git's file replacements visible to a live Caddy.
+          "${compose[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+          "${compose[@]}" exec -T app python scripts/check_deployment.py --https
           printf '%s\n' "$DEPLOY_SHA" > "$(git rev-parse --git-path smartdiet-test-deployed-sha)"
           "${compose[@]}" ps
           echo "Successfully deployed $DEPLOY_SHA to the test server."

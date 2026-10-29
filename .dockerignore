@@ -14,3 +14,4 @@ venv
 **/*.sqlite
 **/*.sqlite3
 app/uploads/
+caddy/

@@ -260,6 +260,8 @@ alembic history --verbose
 
 ## 测试服务器自动部署（GitHub Actions）
 
+服务器 HTTPS 由 Compose 内的 Caddy 提供，配置、首次切换及验收见 [Caddy HTTPS 部署](docs/caddy.md)。API 和 MinIO 使用不同域名，直连端口仅本机可访问。旧数据库数据由维护者手动清理，部署流程不执行清库。
+
 后端仓库的 `main` 收到 push（含 PR 合并）后，`.github/workflows/deploy-test.yml` 通过 SSH 登录固定测试服务器，在服务器构建镜像并更新 Docker Compose 服务。部署命令全部写在 workflow 中，可以从 Actions 页面手动重新触发。仓库仅保留测试环境自动部署工作流，测试和依赖审计可按下文说明手动运行。
 
 ### 1. 首次准备服务器
@@ -280,19 +282,23 @@ chmod 600 .env
 编辑服务器 `.env`：
 
 - 分别设置 `POSTGRES_PASSWORD`、`REDIS_PASSWORD`、`JWT_SECRET`、`MINIO_ROOT_PASSWORD`，可运行 `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` 分别生成。数据库密码须使用 URL 安全字符，因为它会拼入数据库连接串。
-- 设置 `MINIO_PUBLIC_URL` 为测试客户端可访问的 S3 API 根地址，例如 `http://测试服务器地址:9002`，不含路径；使用域名反向代理时填写对应地址。
+- 设置 `API_DOMAIN`、`IMAGES_DOMAIN` 和真实 `ACME_EMAIL`，两个域名均解析到服务器。Compose 自动将 `MINIO_PUBLIC_URL` 设为 `https://<IMAGES_DOMAIN>`。
 - 按需填写模型接口和微信凭据，未配置微信时仍可使用网页账号登录。
 - 可调整 `TEST_APP_PORT`、`TEST_MINIO_PORT` 和 `TEST_MINIO_CONSOLE_PORT`。
 - 测试镜像构建默认使用清华 PyPI 镜像，下载超时 60 秒、连接重试 5 次；可通过 `.env` 的 `PIP_INDEX_URL`、`PIP_TIMEOUT`、`PIP_RETRIES` 调整。使用官方源时设置 `PIP_INDEX_URL=https://pypi.org/simple`。这些变量通过 Compose build args 传入 Docker 构建，不是应用运行时变量；依赖版本和 SHA256 哈希仍以 `requirements.txt` 为准。
 
-测试配置独立使用 `docker-compose.test.yml`，不与开发 Compose 合并。应用无源码挂载、无热重载，启动时先执行数据库迁移；PostgreSQL、Redis 不发布宿主机端口，MinIO 控制台仅绑定 `127.0.0.1`。按需在服务器防火墙开放 API 和图片访问端口。
+测试配置独立使用 `docker-compose.test.yml`，不与开发 Compose 合并。应用无源码挂载、无热重载，启动时先执行数据库迁移。PostgreSQL、Redis 不发布宿主机端口；API、MinIO API 和控制台仅绑定 `127.0.0.1`。对公网开放 Caddy 的 TCP 80/443，HTTP/3 可选开放 UDP 443；先确认现有 HTTPS 服务的端口占用，按 Caddy 部署文档完成切换。
 
 先手动验证一次：
 
 ```bash
 docker compose --env-file .env -f docker-compose.test.yml config --quiet
 docker compose --env-file .env -f docker-compose.test.yml build app
+docker compose --env-file .env -f docker-compose.test.yml run --rm --no-deps app python scripts/check_deployment.py
+docker compose --env-file .env -f docker-compose.test.yml run --rm --no-deps caddy-validate
 docker compose --env-file .env -f docker-compose.test.yml up -d --no-build --wait --wait-timeout 120
+docker compose --env-file .env -f docker-compose.test.yml exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+docker compose --env-file .env -f docker-compose.test.yml exec -T app python scripts/check_deployment.py --https
 curl --fail http://127.0.0.1:8000/health
 ```
 
@@ -322,8 +328,8 @@ workflow 会：
 1. 校验配置、建立 SSH 连接，并在服务器取得部署锁。
 2. 检查服务器工作区；存在未提交或未跟踪的非忽略文件时停止，保留本地修改。
 3. 获取 `origin/main`，仅部署与当前远程主分支一致的本次提交 SHA，跳过过时任务。
-4. 切换到该 SHA（detached HEAD），校验 `.env` 和 Compose 配置，构建以 SHA 为标签的应用镜像。
-5. 构建成功后更新容器，最多等待 120 秒。应用健康检查从容器内请求 `/health`，同时校验 HTTP 成功、`code=0` 和 `data.status=ok`；Compose 也等待数据库、Redis 健康。
+4. 切换到该 SHA（detached HEAD），校验 `.env` 和 Compose 配置，构建以 SHA 为标签的应用镜像，再校验公开域名和 Caddyfile。
+5. 构建成功后更新容器，最多等待 120 秒。应用健康检查从容器内请求 `/health`，同时校验 HTTP 成功、`code=0` 和 `data.status=ok`；Compose 也等待数据库、Redis 和 Caddy 健康。随后 reload Caddy 并最多等待 180 秒，验证 API、MinIO 的公网 HTTPS 和 HTTP 跳转。
 6. 成功后将 SHA 写入 `.git/smartdiet-test-deployed-sha`；失败时返回非零状态，并输出容器状态和近期日志。
 
 同一时间只运行一个部署，不自动取消正在执行的任务；服务器文件锁也会串行处理尚未退出的 SSH 部署进程。单实例更新有短暂中断。构建失败时不更新现有容器；容器更新、迁移或健康检查失败时不会自动回滚。
@@ -357,7 +363,7 @@ cat .git/smartdiet-test-deployed-sha
 
 2. **使用反向代理**
 
-   推荐使用 Nginx 反向代理，配置 HTTPS。
+   服务器 Compose 已集成 Caddy，提供 API 与 MinIO HTTPS 反向代理、自动证书续期及 HTTP 跳转，见 [部署说明](docs/caddy.md)。
 
 3. **数据库备份**
    ```bash
