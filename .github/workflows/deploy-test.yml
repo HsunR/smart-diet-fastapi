@@ -108,12 +108,14 @@ jobs:
           # Build first so an unsuccessful build leaves the running containers alone.
           "${compose[@]}" build app
           # These one-off checks do not start dependencies or run migrations.
-          "${compose[@]}" run --rm --no-deps app python scripts/check_deployment.py
-          "${compose[@]}" run --rm --no-deps caddy-validate
+          # Bash reads this script from SSH stdin. Attached Docker commands must
+          # read /dev/null so they cannot swallow the remaining deployment steps.
+          "${compose[@]}" run --rm --no-deps -T app python scripts/check_deployment.py </dev/null
+          "${compose[@]}" run --rm --no-deps -T caddy-validate </dev/null
           "${compose[@]}" up -d --no-build --wait --wait-timeout 120
           # Directory mounting makes Git's file replacements visible to a live Caddy.
-          "${compose[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-          "${compose[@]}" exec -T app python scripts/check_deployment.py --https
+          "${compose[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null
+          "${compose[@]}" exec -T app python scripts/check_deployment.py --https </dev/null
           printf '%s\n' "$DEPLOY_SHA" > "$(git rev-parse --git-path smartdiet-test-deployed-sha)"
           "${compose[@]}" ps
           echo "Successfully deployed $DEPLOY_SHA to the test server."
