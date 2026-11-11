@@ -10,9 +10,5 @@ venv/
 .env
 app/uploads/
 
-# Optional server-local TLS snippets and private keys.
-caddy/tls/**
-!caddy/tls/api/
-!caddy/tls/images/
-!caddy/tls/api/.gitkeep
-!caddy/tls/images/.gitkeep
+# Historical server-local TLS material; keep private keys out of Git.
+caddy/

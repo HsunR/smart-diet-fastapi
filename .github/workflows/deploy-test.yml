@@ -26,6 +26,10 @@ jobs:
       TEST_SSH_KNOWN_HOSTS: ${{ secrets.TEST_SSH_KNOWN_HOSTS }}
       DEPLOY_SHA: ${{ github.sha }}
     steps:
+      - name: Check out deployment script
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Update and start backend over SSH
         shell: bash
         run: |
@@ -52,71 +56,10 @@ jobs:
           ssh-keygen -y -P '' -f "$ssh_dir/key" > /dev/null
 
           # Quote arguments before passing them through the remote login shell.
-          printf -v remote_command 'bash -s -- %q %q' "$TEST_DEPLOY_PATH" "$DEPLOY_SHA"
+          printf -v remote_command 'bash -s -- --deploy-dir %q --sync --revision %q' "$TEST_DEPLOY_PATH" "$DEPLOY_SHA"
           ssh -T -p "$TEST_SERVER_PORT" -i "$ssh_dir/key" \
             -o BatchMode=yes -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -o "UserKnownHostsFile=$ssh_dir/known_hosts" \
             -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
-            "$TEST_SERVER_USER@$TEST_SERVER_HOST" "$remote_command" <<'REMOTE'
-          set -Eeuo pipefail
-          deploy_path="$1"
-          export DEPLOY_SHA="$2"
-          export GIT_TERMINAL_PROMPT=0
-
-          for command in git docker flock; do
-            command -v "$command" > /dev/null
-          done
-          cd -- "$deploy_path"
-          [[ "$(git rev-parse --show-toplevel)" -ef . ]]
-
-          # Also serialize remote sessions if a runner is canceled or disconnected.
-          exec 9> "$(git rev-parse --git-path smartdiet-test-deploy.lock)"
-          flock -w 600 9
-
-          if [[ -n "$(git status --porcelain)" ]]; then
-            echo 'Deployment stopped: the server checkout has local changes.' >&2
-            exit 1
-          fi
-          git -c core.sshCommand='ssh -o BatchMode=yes -o StrictHostKeyChecking=yes' \
-            fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          if [[ "$DEPLOY_SHA" != "$(git rev-parse refs/remotes/origin/main)" ]]; then
-            echo "Skipping outdated deployment $DEPLOY_SHA; main has a newer commit."
-            exit 0
-          fi
-          git -c advice.detachedHead=false checkout --detach "$DEPLOY_SHA"
-
-          if [[ ! -f .env || ! -f docker-compose.test.yml || ! -f caddy/Caddyfile ]]; then
-            echo 'Missing .env, docker-compose.test.yml or caddy/Caddyfile; complete the server setup in README.md.' >&2
-            exit 1
-          fi
-          docker compose version > /dev/null
-          docker info > /dev/null
-          compose=(docker compose --env-file .env -f docker-compose.test.yml)
-          "${compose[@]}" config --quiet
-
-          on_error() {
-            status=$?
-            trap - ERR
-            echo "Deployment failed for $DEPLOY_SHA (exit $status)." >&2
-            "${compose[@]}" ps --all || true
-            "${compose[@]}" logs --no-color --tail 80 caddy app db redis minio || true
-            exit "$status"
-          }
-          trap on_error ERR
-
-          # Build first so an unsuccessful build leaves the running containers alone.
-          "${compose[@]}" build app
-          # These one-off checks do not start dependencies or run migrations.
-          # Bash reads this script from SSH stdin. Attached Docker commands must
-          # read /dev/null so they cannot swallow the remaining deployment steps.
-          "${compose[@]}" run --rm --no-deps -T app python scripts/check_deployment.py </dev/null
-          "${compose[@]}" run --rm --no-deps -T caddy-validate </dev/null
-          "${compose[@]}" up -d --no-build --wait --wait-timeout 120
-          # Directory mounting makes Git's file replacements visible to a live Caddy.
-          "${compose[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null
-          "${compose[@]}" exec -T app python scripts/check_deployment.py --https </dev/null
-          printf '%s\n' "$DEPLOY_SHA" > "$(git rev-parse --git-path smartdiet-test-deployed-sha)"
-          "${compose[@]}" ps
-          echo "Successfully deployed $DEPLOY_SHA to the test server."
-          REMOTE
+            "$TEST_SERVER_USER@$TEST_SERVER_HOST" "$remote_command" < scripts/deploy-test.sh
